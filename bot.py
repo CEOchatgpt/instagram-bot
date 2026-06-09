@@ -1,6 +1,5 @@
 # bot.py
 import logging
-import os
 from telegram import Update, InputMediaVideo, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from config import BOT_TOKEN
@@ -29,40 +28,40 @@ async def handle_link(update: Update, context):
     processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
 
     try:
-        media_items = get_instagram_media(url)
+        result = get_instagram_media(url)
 
-        if not media_items:
+        if not result:
             await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم. مطمئن شو پست عمومیه.")
             return
 
+        caption = result["caption"]
+        items = result["items"]
+
         await processing_msg.edit_text("📤 در حال ارسال...")
 
-        # اگه فقط یه آیتم داریم
-        if len(media_items) == 1:
-            item = media_items[0]
+        if len(items) == 1:
+            item = items[0]
             if item["type"] == "video":
                 await update.message.reply_video(
                     video=item["url"],
                     supports_streaming=True,
-                    caption="✅"
+                    caption=caption
                 )
             else:
                 await update.message.reply_photo(
                     photo=item["url"],
-                    caption="✅"
+                    caption=caption
                 )
-
-        # اگه چند آیتم داریم (کاروسل) — media group میفرستیم
         else:
+            # کاروسل — کپشن فقط روی اولین آیتم
             media_group = []
-            for i, item in enumerate(media_items):
-                caption = "✅" if i == 0 else None
+            for i, item in enumerate(items):
+                c = caption if i == 0 else None
                 if item["type"] == "video":
-                    media_group.append(InputMediaVideo(media=item["url"], caption=caption))
+                    media_group.append(InputMediaVideo(media=item["url"], caption=c))
                 else:
-                    media_group.append(InputMediaPhoto(media=item["url"], caption=caption))
+                    media_group.append(InputMediaPhoto(media=item["url"], caption=c))
 
-            # تلگرام حداکثر ۱۰ تا در یه گروه قبول میکنه
             for i in range(0, len(media_group), 10):
                 await update.message.reply_media_group(media=media_group[i:i+10])
 
