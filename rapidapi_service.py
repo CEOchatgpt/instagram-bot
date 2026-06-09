@@ -3,10 +3,10 @@ import requests
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 
 
-def get_instagram_media(post_url: str) -> list | None:
+def get_instagram_media(post_url: str) -> dict | None:
     """
-    لیست تمام media های یه پست اینستاگرام رو برمیگردونه.
-    هر آیتم: {"type": "video"/"photo", "url": "..."}
+    media های پست + کپشن رو برمیگردونه.
+    خروجی: {"caption": "...", "items": [{"type": "video"/"photo", "url": "..."}]}
     """
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
 
@@ -24,27 +24,23 @@ def get_instagram_media(post_url: str) -> list | None:
         if not isinstance(data, list) or not data:
             return None
 
-        result = []
+        # کپشن از اولین آیتم
+        raw_caption = data[0].get("meta", {}).get("title", "")
+        # کوتاه کردن کپشن (تلگرام max 1024 کاراکتر برای caption)
+        caption = raw_caption[:1020] + "..." if len(raw_caption) > 1024 else raw_caption
 
+        items = []
         for item in data:
             urls = item.get("urls", [])
             picture_url = item.get("pictureUrl")
 
             if urls:
-                # ویدئو — بهترین کیفیت
                 best = max(urls, key=lambda x: x.get("quality", 0))
-                result.append({
-                    "type": "video",
-                    "url": best["url"]
-                })
+                items.append({"type": "video", "url": best["url"]})
             elif picture_url:
-                # عکس
-                result.append({
-                    "type": "photo",
-                    "url": picture_url
-                })
+                items.append({"type": "photo", "url": picture_url})
 
-        return result if result else None
+        return {"caption": caption, "items": items} if items else None
 
     except requests.exceptions.Timeout:
         print("⏱ RapidAPI timeout")
