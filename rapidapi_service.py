@@ -3,7 +3,11 @@ import requests
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 
 
-def get_instagram_video_url(post_url: str) -> str | None:
+def get_instagram_media(post_url: str) -> list | None:
+    """
+    لیست تمام media های یه پست اینستاگرام رو برمیگردونه.
+    هر آیتم: {"type": "video"/"photo", "url": "..."}
+    """
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
 
     headers = {
@@ -17,22 +21,30 @@ def get_instagram_video_url(post_url: str) -> str | None:
         response.raise_for_status()
         data = response.json()
 
-        # data یه list هست — اولین آیتم رو میگیریم
         if not isinstance(data, list) or not data:
-            print("❌ Response خالی یا غیرمنتظره بود")
             return None
 
-        item = data[0]
+        result = []
 
-        # بهترین کیفیت رو پیدا میکنیم
-        urls = item.get("urls", [])
-        if not urls:
-            print("❌ هیچ URL ویدئویی پیدا نشد")
-            return None
+        for item in data:
+            urls = item.get("urls", [])
+            picture_url = item.get("pictureUrl")
 
-        # بالاترین کیفیت رو انتخاب میکنیم
-        best = max(urls, key=lambda x: x.get("quality", 0))
-        return best.get("url")
+            if urls:
+                # ویدئو — بهترین کیفیت
+                best = max(urls, key=lambda x: x.get("quality", 0))
+                result.append({
+                    "type": "video",
+                    "url": best["url"]
+                })
+            elif picture_url:
+                # عکس
+                result.append({
+                    "type": "photo",
+                    "url": picture_url
+                })
+
+        return result if result else None
 
     except requests.exceptions.Timeout:
         print("⏱ RapidAPI timeout")
