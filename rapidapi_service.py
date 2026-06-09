@@ -25,7 +25,7 @@ def get_instagram_media(post_url: str) -> dict | None:
             return None
 
         # کپشن از اولین آیتم
-        raw_caption = "تق ✅\n" + data[0].get("meta", {}).get("title", "")
+        raw_caption = "تق ✅\n\n" + data[0].get("meta", {}).get("title", "")
         # کوتاه کردن کپشن (تلگرام max 1024 کاراکتر برای caption)
         caption = raw_caption[:1020] + "..." if len(raw_caption) > 1024 else raw_caption
 
