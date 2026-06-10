@@ -62,30 +62,30 @@ def is_rate_limited(user_id: int) -> tuple[bool, int]:
 
 # هندلر دستور /start — وقتی کاربر ربات رو شروع میکنه اجرا میشه
 async def start(update: Update, context):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚀 دانلود جدید", callback_data="new_download")],
+        [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
+    ])
+    
     await update.message.reply_text(
-        "🎬 سلام! لینک پست اینستاگرام رو بفرست تا برات بفرستم.\n\n"
-        f"⚠️ محدودیت: هر {WINDOW_SECS} ثانیه، {RATE_LIMIT} درخواست"
+        "<b>👋 سلام! ربات دانلود اینستاگرام</b>\n\n"
+        "لینک هر پست، ریلز یا کاروسل عمومی رو بفرست.\n"
+        "من با کیفیت بالا و ظاهر تمیز برات می‌فرستم 🎥📸\n\n"
+        "<i>ساخته شده با ❤️</i>",
+        parse_mode='HTML',
+        reply_markup=keyboard
     )
 
 
 # هندلر دستور /help — راهنمای کامل ربات رو نشون میده
 async def help_command(update: Update, context):
     await update.message.reply_text(
-        "📖 راهنمای ربات\n\n"
-        "🔹 نحوه استفاده:\n"
-        "  لینک هر پست عمومی اینستاگرام رو بفرست\n"
-        "  ربات عکس یا ویدیوش رو برات میفرسته\n\n"
-        "🔹 انواع پست‌های پشتیبانی‌شده:\n"
-        "  • پست تک عکس / تک ویدیو\n"
-        "  • پست کاروسل (چند عکس/ویدیو)\n"
-        "  • ریلز\n\n"
-        "🔹 محدودیت‌ها:\n"
-        f"  • حداکثر {RATE_LIMIT} درخواست در {WINDOW_SECS} ثانیه\n"
-        "  • فقط پست‌های عمومی قابل دانلودن\n\n"
-        "🔹 دستورات:\n"
-        "  /start — شروع ربات\n"
-        "  /help  — نمایش همین راهنما\n\n"
-        "⚡ ساخته‌شده با Python & python-telegram-bot"
+        "📖 <b>راهنمای ربات</b>\n\n"
+        "🔹 فقط لینک اینستاگرام بفرست\n"
+        "🔹 پست تک عکس/ویدیو، کاروسل، ریلز پشتیبانی میشه\n"
+        "🔹 محدودیت: " + str(RATE_LIMIT) + f" درخواست هر {WINDOW_SECS} ثانیه\n\n"
+        "⚡ ساخته شده با Python + python-telegram-bot",
+        parse_mode='HTML'
     )
 
 
@@ -102,7 +102,7 @@ async def handle_link(update: Update, context):
     # بررسی rate limit — اگه کاربر زیادی سریع درخواست داده، رد میکنه
     limited, wait = is_rate_limited(user_id)
     if limited:
-        await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه دیگه امتحان کن.")
+        await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
         return
 
     # یه پیام "در حال پردازش" میفرسته تا کاربر بدونه داره کار میکنه
@@ -112,34 +112,46 @@ async def handle_link(update: Update, context):
         # تابع async رو صدا میزنه و منتظر جواب میمونه
         result = await get_instagram_media(url)
 
-        if not result:
-            await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم. مطمئن شو پست عمومیه.")
+        if not result or not result.get("items"):
+            await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم. پست باید عمومی باشه.")
             return
 
         # نتیجه رو توی user_data ذخیره میکنیم تا بعد از انتخاب کاربر بهش دسترسی داشته باشیم
         context.user_data["pending_result"] = result
+        await processing_msg.delete()
 
-        await processing_msg.delete()  # پیام "در حال پردازش" رو حذف میکنه
+        # ==================== تغییر مهم: تشخیص هوشمند نوع محتوا ====================
+        items = result["items"]
+        has_video = any(item["type"] == "video" for item in items)
+        has_photo = any(item["type"] == "photo" for item in items)
+        is_single = len(items) == 1
 
-        # دو دکمه inline میسازه — کاربر یکی رو انتخاب میکنه
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("📷 عکس معمولی", callback_data="send_photo"),
-                InlineKeyboardButton("📁 فایل", callback_data="send_file"),
-            ]
-        ])
-        await update.message.reply_text(
-            "✨ نوع ارسال را انتخاب کن\n\n"
-            "📷 عکس معمولی\n"
-            "• نمایش مستقیم داخل تلگرام\n\n"
-            "📁 فایل\n"
-            "• کیفیت اصلی بدون فشرده سازی",
-            reply_markup=keyboard
-        )
+        # ساخت کیبورد و متن متفاوت بسته به عکس/ویدیو/کاروسل
+        if is_single and has_video:
+            text = "🎥 <b>ویدیو پیدا شد!</b>\n\nچطور برات بفرستم؟"
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 ارسال ویدیو", callback_data="send_video")],
+                [InlineKeyboardButton("📁 فایل (کیفیت اصلی)", callback_data="send_file")]
+            ])
+        elif is_single and has_photo:
+            text = "📸 <b>عکس پیدا شد!</b>\n\nچطور برات بفرستم؟"
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🖼 عکس معمولی", callback_data="send_photo")],
+                [InlineKeyboardButton("📁 فایل (کیفیت اصلی)", callback_data="send_file")]
+            ])
+        else:
+            # کاروسل (چند رسانه‌ای)
+            text = f"📚 <b>کاروسل پیدا شد!</b> ({len(items)} رسانه)\n\nچطور ارسال کنم؟"
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🖼 عکس‌های معمولی", callback_data="send_photo")],
+                [InlineKeyboardButton("📁 همه به صورت فایل", callback_data="send_file")]
+            ])
+
+        await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error(f"Error: {e}")
-        await processing_msg.edit_text(f"❌ خطایی رخ داد: {str(e)}")
+        await processing_msg.edit_text("❌ خطایی رخ داد. دوباره امتحان کن.")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -155,24 +167,21 @@ async def download_media(url: str, filename: str):
             return file_obj
 
 
-# هندلر کلیک دکمه — وقتی کاربر روی "عکس معمولی" یا "فایل" کلیک میکنه اجرا میشه
+# هندلر کلیک دکمه — وقتی کاربر روی دکمه‌ها کلیک میکنه اجرا میشه
 async def handle_format_choice(update: Update, context):
     query = update.callback_query  # اطلاعات کلیک رو میگیره
     await query.answer()  # به تلگرام میگه دکمه دریافت شد
 
-    # انتخاب کاربر رو میخونه: "send_photo" یا "send_file"
-    as_file = (query.data == "send_file")
-
-    # نتیجه‌ای که قبلاً توی handle_link ذخیره کرده بودیم رو میخونه
+    choice = query.data
     result = context.user_data.get("pending_result")
     if not result:
-        await query.edit_message_text("❌ اطلاعات منقضی شده. لینک رو دوباره بفرست.")
+        await query.edit_message_text("❌ اطلاعات منقضی شد. لینک رو دوباره بفرست.")
         return
 
     caption = result["caption"]  # کپشن آماده‌شده
     items = result["items"]      # لیست مدیاها
 
-    await query.delete_message()  # پیام "به چه صورت بفرستم؟" رو حذف میکنه
+    await query.delete_message()  # پیام انتخاب رو حذف میکنه
 
     # یه پیام وضعیت جدید میفرسته
     sending_msg = await context.bot.send_message(
@@ -184,26 +193,27 @@ async def handle_format_choice(update: Update, context):
         if len(items) == 1:
             item = items[0]
 
+            # ==================== تغییر مهم: ارسال هوشمند بر اساس نوع ====================
             if item["type"] == "video":
-                # ویدیو همیشه به صورت ویدیو فرستاده میشه
+                # ویدیو همیشه به صورت ویدیو فرستاده میشه (حتی اگر فایل انتخاب شده باشه)
                 await context.bot.send_video(
                     chat_id=update.effective_chat.id,
                     video=item["url"],
-                    supports_streaming=not as_file,
+                    supports_streaming=True,
                     caption=caption
                 )
-            elif as_file:
-                # عکس به صورت فایل — تلگرام فشرده‌سازی نمیکنه، کیفیت اصلی حفظ میشه
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id,
-                    document=item["url"],
-                    caption=caption
-                )
-            else:
-                # عکس معمولی — تلگرام نمایش میده ولی ممکنه کیفیت رو کمی کاهش بده
+            elif choice == "send_photo":
+                # عکس معمولی — نمایش مستقیم داخل چت
                 await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     photo=item["url"],
+                    caption=caption
+                )
+            else:  # send_file
+                # عکس/ویدیو به صورت فایل (کیفیت اصلی)
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=item["url"],
                     caption=caption
                 )
 
@@ -212,39 +222,18 @@ async def handle_format_choice(update: Update, context):
             # ارسال کاروسل (بیشتر از یک آیتم)
             # ─────────────────────────────────────────────────────────
             media_group = []
-
             for i, item in enumerate(items):
-                # کپشن فقط روی اولین آیتم نمایش داده میشه
                 c = caption if i == 0 else None
 
                 if item["type"] == "video":
-                    # ویدیوها رو مستقیم اضافه میکنیم
-                    media_group.append(
-                        InputMediaVideo(
-                            media=item["url"],
-                            caption=c
-                        )
-                    )
-                elif as_file:
-                    # عکس به صورت فایل
-                    media_group.append(
-                        InputMediaDocument(
-                            media=item["url"],
-                            caption=c
-                        )
-                    )
+                    media_group.append(InputMediaVideo(media=item["url"], caption=c))
+                elif choice == "send_photo":
+                    # عکس معمولی
+                    photo_file = await download_media(item["url"], f"photo_{i}.jpg")
+                    media_group.append(InputMediaPhoto(media=photo_file, caption=c))
                 else:
-                    # عکس معمولی (دانلود از url و تبدیل به فایل مجازی)
-                    photo_file = await download_media(
-                        item["url"],
-                        f"photo_{i}.jpg"
-                    )
-                    media_group.append(
-                        InputMediaPhoto(
-                            media=photo_file,
-                            caption=c
-                        )
-                    )
+                    # به صورت فایل
+                    media_group.append(InputMediaDocument(media=item["url"], caption=c))
 
             # ارسال آلبوم‌ها در دسته‌های ۱۰ تایی
             for i in range(0, len(media_group), 10):
@@ -253,10 +242,16 @@ async def handle_format_choice(update: Update, context):
                     media=media_group[i:i + 10]
                 )
 
-        await sending_msg.delete()  # پیام "در حال ارسال..." رو حذف میکنه
+        await sending_msg.delete()
 
-        # بعد از ارسال موفق، داده رو از user_data پاک میکنه تا حافظه اشغال نشه
+        # بعد از ارسال موفق، داده رو از user_data پاک میکنه
         context.user_data.pop("pending_result", None)
+
+        # پیام موفقیت
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="✅ با موفقیت ارسال شد!\n\nلینک بعدی رو بفرست 🚀"
+        )
 
     except Exception as e:
         logger.error(f"Error sending media: {e}")
@@ -264,20 +259,16 @@ async def handle_format_choice(update: Update, context):
 
 
 def main():
-    # اپلیکیشن ربات رو با توکن میسازه
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))         # هندلر /start
-    app.add_handler(CommandHandler("help", help_command))   # هندلر /help
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))  # هندلر لینک‌ها
-
-    # هندلر کلیک روی دکمه‌های inline رو ثبت میکنه
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
     app.add_handler(CallbackQueryHandler(handle_format_choice))
 
-    print("🚀 ربات روشن شد...")
-    # ربات رو شروع میکنه و منتظر پیام میمونه
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("🤖 ربات در حال اجراست...")
+    app.run_polling()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
