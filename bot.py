@@ -4,8 +4,21 @@ import logging  # کتابخونه‌ی استاندارد پایتون برای
 import time     # برای گرفتن زمان فعلی و محاسبه فاصله بین درخواست‌ها
 from collections import defaultdict  # دیکشنری با مقدار پیش‌فرض — برای ساختن تاریخچه هر کاربر
 
-from telegram import Update, InputMediaVideo, InputMediaPhoto  # کلاس‌های اصلی تلگرام
-from telegram.ext import Application, CommandHandler, MessageHandler, filters  # ابزارهای ساخت ربات
+from telegram import (
+    Update,
+    InputMediaVideo,       # برای ارسال ویدیو توی گروه مدیا
+    InputMediaPhoto,       # برای ارسال عکس توی گروه مدیا
+    InputMediaDocument,    # برای ارسال فایل توی گروه مدیا (بدون فشرده‌سازی تلگرام)
+    InlineKeyboardButton,  # یه دکمه‌ی کلیکی زیر پیام
+    InlineKeyboardMarkup,  # ظرف دکمه‌ها — یه یا چند ردیف از دکمه‌ها
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,      # هندلر دستوراتی مثل /start و /help
+    MessageHandler,      # هندلر پیام‌های متنی معمولی
+    CallbackQueryHandler, # هندلر کلیک روی دکمه‌های inline
+    filters,
+)
 
 from config import BOT_TOKEN  # توکن ربات از فایل تنظیمات
 from rapidapi_service import get_instagram_media  # تابعی که مدیای اینستاگرام رو میگیره
@@ -17,14 +30,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)  # یه logger مخصوص این فایل میسازه
 
-# ── تنظیمات Rate Limiting ──────────────────────────────────────────────────
+# ── تنظیمات Rate Limiting ───────────────────────────────────────────────────
 RATE_LIMIT  = 3   # هر کاربر حداکثر این تعداد درخواست میتونه توی پنجره زمانی بده
 WINDOW_SECS = 60  # پنجره زمانی به ثانیه — بعد از این مدت، شمارنده ریست میشه
 
 # دیکشنری که برای هر user_id یه لیست از زمان‌های درخواست نگه میداره
-# defaultdict(list) یعنی اگه کاربر جدید بود، خودش لیست خالی میسازه
 user_requests: dict[int, list[float]] = defaultdict(list)
-# ──────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 
 
 def is_rate_limited(user_id: int) -> tuple[bool, int]:
@@ -32,15 +44,11 @@ def is_rate_limited(user_id: int) -> tuple[bool, int]:
     چک میکنه آیا کاربر به حد مجاز رسیده یا نه.
     خروجی: (آیا محدود شده؟, چند ثانیه باید صبر کنه)
     """
-    now = time.time()  # زمان فعلی به ثانیه (عدد اعشاری مثل 1718000000.45)
+    now = time.time()  # زمان فعلی به ثانیه
 
     # فقط درخواست‌هایی که توی پنجره زمانی هستن رو نگه میداره، قدیمی‌ترها رو حذف میکنه
-    user_requests[user_id] = [
-        t for t in user_requests[user_id]
-        if now - t < WINDOW_SECS  # اگه کمتر از WINDOW_SECS ثانیه پیش بود، نگهش میداره
-    ]
+    user_requests[user_id] = [t for t in user_requests[user_id] if now - t < WINDOW_SECS]
 
-    # چک میکنه تعداد درخواست‌های باقیمونده به حد مجاز رسیده یا نه
     if len(user_requests[user_id]) >= RATE_LIMIT:
         # قدیمی‌ترین درخواست رو پیدا میکنه و حساب میکنه چقدر باید صبر کنه
         oldest = user_requests[user_id][0]
@@ -49,7 +57,7 @@ def is_rate_limited(user_id: int) -> tuple[bool, int]:
 
     # محدود نشده — زمان این درخواست رو به تاریخچه اضافه میکنه
     user_requests[user_id].append(now)
-    return False, 0  # آزاده
+    return False, 0
 
 
 # هندلر دستور /start — وقتی کاربر ربات رو شروع میکنه اجرا میشه
@@ -89,92 +97,147 @@ async def handle_link(update: Update, context):
     # چک میکنه لینک واقعاً اینستاگرام باشه
     if "instagram.com" not in url:
         await update.message.reply_text("❌ فقط لینک اینستاگرام قبول میکنم!")
-        return  # اگه اینستاگرام نبود، ادامه نمیده
+        return
 
-    # ── بررسی Rate Limit ──────────────────────────────────────────────────
+    # بررسی rate limit — اگه کاربر زیادی سریع درخواست داده، رد میکنه
     limited, wait = is_rate_limited(user_id)
     if limited:
-        # به کاربر میگه چقدر باید صبر کنه
-        await update.message.reply_text(
-            f"⏳ زیادی سریع! {wait} ثانیه دیگه امتحان کن."
-        )
-        return  # بدون پردازش برمیگرده
-    # ──────────────────────────────────────────────────────────────────────
+        await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه دیگه امتحان کن.")
+        return
 
     # یه پیام "در حال پردازش" میفرسته تا کاربر بدونه داره کار میکنه
     processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
 
     try:
-        # تابع async رو صدا میزنه و منتظر جواب میمونه (بدون block کردن بقیه)
+        # تابع async رو صدا میزنه و منتظر جواب میمونه
         result = await get_instagram_media(url)
 
-        # اگه نتیجه‌ای نبود (پست خصوصی یا لینک اشتباه)
         if not result:
             await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم. مطمئن شو پست عمومیه.")
             return
 
-        caption = result["caption"]  # کپشن آماده‌شده رو از نتیجه میگیره
-        items = result["items"]      # لیست مدیاها (عکس‌ها و ویدیوها) رو از نتیجه میگیره
+        # نتیجه رو توی user_data ذخیره میکنیم تا بعد از انتخاب کاربر بهش دسترسی داشته باشیم
+        # user_data یه دیکشنری مخصوص هر کاربره که تلگرام برامون نگهش میداره
+        context.user_data["pending_result"] = result
 
-        # پیام وضعیت رو آپدیت میکنه
-        await processing_msg.edit_text("📤 در حال ارسال...")
+        await processing_msg.delete()  # پیام "در حال پردازش" رو حذف میکنه
 
+        # دو دکمه inline میسازه — کاربر یکی رو انتخاب میکنه
+        # callback_data مقداریه که وقتی کاربر دکمه رو میزنه به ربات برمیگرده
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📷 عکس معمولی", callback_data="send_photo"),
+                InlineKeyboardButton("📁 فایل", callback_data="send_file"),
+            ]
+        ])
+        await update.message.reply_text("به چه صورت بفرستم؟", reply_markup=keyboard)
+
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await processing_msg.edit_text(f"❌ خطایی رخ داد: {str(e)}")
+
+
+# هندلر کلیک دکمه — وقتی کاربر روی "عکس معمولی" یا "فایل" کلیک میکنه اجرا میشه
+async def handle_format_choice(update: Update, context):
+    query = update.callback_query  # اطلاعات کلیک رو میگیره
+    await query.answer()  # به تلگرام میگه دکمه دریافت شد (حالت loading دکمه رو برمیداره)
+
+    # انتخاب کاربر رو میخونه: "send_photo" یا "send_file"
+    as_file = (query.data == "send_file")
+
+    # نتیجه‌ای که قبلاً توی handle_link ذخیره کرده بودیم رو میخونه
+    result = context.user_data.get("pending_result")
+    if not result:
+        # اگه ربات ریستارت شده باشه، user_data پاک میشه
+        await query.edit_message_text("❌ اطلاعات منقضی شده. لینک رو دوباره بفرست.")
+        return
+
+    caption = result["caption"]  # کپشن آماده‌شده
+    items = result["items"]      # لیست مدیاها
+
+    await query.delete_message()  # پیام "به چه صورت بفرستم؟" رو حذف میکنه
+
+    # یه پیام وضعیت جدید میفرسته
+    sending_msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📤 در حال ارسال..."
+    )
+
+    try:
         if len(items) == 1:
-            # فقط یه مدیا داریم (پست معمولی)
             item = items[0]
+
             if item["type"] == "video":
-                # ویدیو رو با کپشن میفرسته، supports_streaming یعنی قبل از دانلود کامل پخش بشه
-                await update.message.reply_video(
+                # ویدیو همیشه به صورت ویدیو فرستاده میشه
+                # اگه کاربر "فایل" انتخاب کرده، supports_streaming غیرفعاله
+                await context.bot.send_video(
+                    chat_id=update.effective_chat.id,
                     video=item["url"],
-                    supports_streaming=True,
+                    supports_streaming=not as_file,
+                    caption=caption
+                )
+            elif as_file:
+                # عکس به صورت فایل — تلگرام فشرده‌سازی نمیکنه، کیفیت اصلی حفظ میشه
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=item["url"],
                     caption=caption
                 )
             else:
-                # عکس رو با کپشن میفرسته
-                await update.message.reply_photo(
+                # عکس معمولی — تلگرام نمایش میده ولی ممکنه کیفیت رو کمی کاهش بده
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
                     photo=item["url"],
                     caption=caption
                 )
-        else:
-            # چند مدیا داریم (پست کاروسل)
-            media_group = []  # لیست آبجکت‌های مدیا برای ارسال گروهی
 
-            # روی همه مدیاها حلقه میزنه، i شماره‌ی آیتم هست
+        else:
+            # کاروسل — چند مدیا رو گروهی میفرسته
+            media_group = []
             for i, item in enumerate(items):
-                c = caption if i == 0 else None  # کپشن فقط روی اولین آیتم گذاشته میشه
+                c = caption if i == 0 else None  # کپشن فقط روی اولین آیتم
 
                 if item["type"] == "video":
+                    # ویدیو همیشه InputMediaVideo میشه
                     media_group.append(InputMediaVideo(media=item["url"], caption=c))
+                elif as_file:
+                    # اگه کاربر "فایل" انتخاب کرده، از InputMediaDocument استفاده میکنیم
+                    # این باعث میشه عکس‌ها بدون فشرده‌سازی فرستاده بشن
+                    media_group.append(InputMediaDocument(media=item["url"], caption=c))
                 else:
+                    # عکس معمولی توی گروه مدیا
                     media_group.append(InputMediaPhoto(media=item["url"], caption=c))
 
             # تلگرام حداکثر ۱۰ مدیا در یه گروه قبول میکنه، پس هر ۱۰ تا رو جداگانه میفرسته
             for i in range(0, len(media_group), 10):
-                await update.message.reply_media_group(media=media_group[i:i+10])
+                await context.bot.send_media_group(
+                    chat_id=update.effective_chat.id,
+                    media=media_group[i:i+10]
+                )
 
-        await processing_msg.delete()  # پیام "در حال ارسال..." رو حذف میکنه
+        await sending_msg.delete()  # پیام "در حال ارسال..." رو حذف میکنه
+
+        # بعد از ارسال موفق، داده رو از user_data پاک میکنه تا حافظه اشغال نشه
+        context.user_data.pop("pending_result", None)
 
     except Exception as e:
-        logger.error(f"Error: {e}")  # خطا رو در لاگ ثبت میکنه
-        await processing_msg.edit_text(f"❌ خطایی رخ داد: {str(e)}")  # به کاربر نشون میده
+        logger.error(f"Error sending media: {e}")
+        await sending_msg.edit_text(f"❌ خطا در ارسال: {str(e)}")
 
 
 def main():
     # اپلیکیشن ربات رو با توکن میسازه
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # هندلر دستور /start رو ثبت میکنه
-    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("start", start))         # هندلر /start
+    app.add_handler(CommandHandler("help", help_command))   # هندلر /help
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))  # هندلر لینک‌ها
 
-    # هندلر دستور /help رو ثبت میکنه
-    app.add_handler(CommandHandler("help", help_command))
-
-    # هندلر پیام‌های متنی (غیر از دستورات) رو ثبت میکنه
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+    # هندلر کلیک روی دکمه‌های inline رو ثبت میکنه
+    app.add_handler(CallbackQueryHandler(handle_format_choice))
 
     print("🚀 ربات روشن شد...")
-
-    # ربات رو شروع میکنه و منتظر پیام میمونه (polling = هر چند ثانیه از تلگرام میپرسه پیام جدید داری؟)
+    # ربات رو شروع میکنه و منتظر پیام میمونه
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
