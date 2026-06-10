@@ -54,10 +54,9 @@ async def start(update: Update, context):
 async def help_command(update: Update, context):
     await update.message.reply_text(
         "📖 <b>راهنمای ربات</b>\n\n"
-        "🔹 فقط لینک اینستاگرام بفرست\n"
-        "🔹 ریلز → فوراً ویدیو ارسال میشه\n"
-        "🔹 عکس → دو گزینه عکس معمولی یا فایل\n"
-        "🔹 کاروسل → انتخابی\n\n"
+        "🔹 ریلز → فوراً ویدیو\n"
+        "🔹 عکس تک → دو گزینه\n"
+        "🔹 کاروسل → آلبوم یکپارچه (عکس معمولی) یا فایل\n\n"
         "⚡ ساخته شده با Python + python-telegram-bot",
         parse_mode='HTML'
     )
@@ -92,13 +91,9 @@ async def handle_link(update: Update, context):
         has_photo = any(item["type"] == "photo" for item in items)
         is_single = len(items) == 1
 
-        # ==================== منطق جدید: ریلز فوراً ارسال بشه ====================
+        # ریلز/ویدیو تک → فوراً ارسال
         if is_single and has_video:
-            # ریلز/ویدیو تک → بدون پرسیدن، مستقیم ارسال کن
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="🎥 ویدیو پیدا شد، در حال ارسال..."
-            )
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ویدیو پیدا شد، در حال ارسال...")
             item = items[0]
             await context.bot.send_video(
                 chat_id=update.effective_chat.id,
@@ -107,24 +102,21 @@ async def handle_link(update: Update, context):
                 caption=result.get("caption", "")
             )
             context.user_data.pop("pending_result", None)
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="✅ ارسال شد! لینک بعدی رو بفرست 🚀"
-            )
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد! لینک بعدی رو بفرست 🚀")
             return
 
-        # برای عکس تک یا کاروسل، گزینه بده
+        # عکس تک
         if is_single and has_photo:
             text = "📸 <b>عکس پیدا شد!</b>\n\nچطور برات بفرستم؟"
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🖼 عکس معمولی (زیبا)", callback_data="send_photo")],
+                [InlineKeyboardButton("🖼 عکس معمولی", callback_data="send_photo")],
                 [InlineKeyboardButton("📁 فایل (کیفیت اصلی)", callback_data="send_file")]
             ])
         else:
             # کاروسل
             text = f"📚 <b>کاروسل پیدا شد!</b> ({len(items)} رسانه)\n\nچطور ارسال کنم؟"
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🖼 عکس‌های معمولی", callback_data="send_photo")],
+                [InlineKeyboardButton("🖼 عکس‌های معمولی (آلبوم)", callback_data="send_photo")],
                 [InlineKeyboardButton("📁 همه به صورت فایل", callback_data="send_file")]
             ])
 
@@ -135,7 +127,15 @@ async def handle_link(update: Update, context):
         await processing_msg.edit_text("❌ خطایی رخ داد. دوباره امتحان کن.")
 
 
-# ... imports و بقیه کد بدون تغییر تا handle_format_choice ...
+async def download_media(url: str, filename: str):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            data = await response.read()
+            file_obj = BytesIO(data)
+            file_obj.name = filename
+            return file_obj
+
 
 async def handle_format_choice(update: Update, context):
     query = update.callback_query
@@ -152,8 +152,7 @@ async def handle_format_choice(update: Update, context):
 
     await query.delete_message()
     sending_msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id, 
-        text="📤 در حال ارسال..."
+        chat_id=update.effective_chat.id, text="📤 در حال ارسال..."
     )
 
     try:
@@ -167,39 +166,32 @@ async def handle_format_choice(update: Update, context):
                     caption=caption
                 )
             elif choice == "send_photo":
-                # ارسال تک عکس به صورت تصویر معمولی (بهترین حالت)
                 await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     photo=item["url"],
                     caption=caption
                 )
-            else:  # send_file
+            else:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=item["url"],
                     caption=caption
                 )
-
         else:
-            # ==================== اصلاح مهم: ارسال کاروسل به صورت عکس معمولی ====================
+            # ==================== کاروسل - آلبوم یکپارچه ====================
             if choice == "send_photo":
-                # برای کاروسل عکس، به صورت تکی با send_photo بفرست تا حتماً تصویر معمولی بشه
+                # ارسال به صورت آلبوم (media group) — عکس‌های معمولی
+                media_group = []
                 for i, item in enumerate(items):
-                    current_caption = caption if i == 0 else ""
-                    try:
-                        await context.bot.send_photo(
-                            chat_id=update.effective_chat.id,
-                            photo=item["url"],           # مستقیم از URL (بهتر کار میکنه)
-                            caption=current_caption
-                        )
-                    except Exception as e:
-                        # در صورت خطا، از فایل دانلود شده استفاده کن
-                        photo_file = await download_media(item["url"], f"photo_{i}.jpg")
-                        await context.bot.send_photo(
-                            chat_id=update.effective_chat.id,
-                            photo=photo_file,
-                            caption=current_caption
-                        )
+                    current_caption = caption if i == 0 else None
+                    media_group.append(InputMediaPhoto(media=item["url"], caption=current_caption))
+
+                # ارسال در دسته‌های حداکثر ۱۰ تایی
+                for i in range(0, len(media_group), 10):
+                    await context.bot.send_media_group(
+                        chat_id=update.effective_chat.id,
+                        media=media_group[i:i+10]
+                    )
             else:
                 # ارسال به صورت فایل (document)
                 media_group = []
@@ -229,16 +221,6 @@ async def handle_format_choice(update: Update, context):
         await sending_msg.edit_text(f"❌ خطا در ارسال: {str(e)}")
 
 
-# تابع download_media بدون تغییر بمونه
-async def download_media(url: str, filename: str):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            response.raise_for_status()
-            data = await response.read()
-            file_obj = BytesIO(data)
-            file_obj.name = filename
-            return file_obj
-            
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
