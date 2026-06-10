@@ -138,7 +138,7 @@ async def handle_link(update: Update, context):
             )
 
         else:  # TikTok
-            result = await asyncio.to_thread(get_tiktok_media, url)
+            result = await get_tiktok_media(url)
             
             if not result or not result.get("url"):
                 await processing_msg.edit_text("❌ نتونستم ویدیو تیک‌تاک رو دانلود کنم.")
