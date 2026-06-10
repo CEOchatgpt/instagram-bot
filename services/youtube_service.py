@@ -17,8 +17,8 @@ def get_youtube_media(url: str):
         return None
 
     try:
-        # Endpoint اصلی که در فایل‌هات بود (video/details)
-        endpoint = f"https://{RAPIDAPI_HOST_YOUTUBE}/video/details/"
+        # تغییر به v2/video-details
+        endpoint = f"https://{RAPIDAPI_HOST_YOUTUBE}/v2/video-details"
 
         headers = {
             "X-RapidAPI-Key": RAPIDAPI_KEY_YOUTUBE,
@@ -26,11 +26,9 @@ def get_youtube_media(url: str):
             "Content-Type": "application/json"
         }
 
-        # بعضی endpointها GET، بعضی POST کار می‌کنن. اول GET امتحان می‌کنیم
         params = {
-            "id": video_id,
-            "hl": "en",
-            "gl": "US"
+            "video_id": video_id,
+            "hl": "en"
         }
 
         response = requests.get(endpoint, headers=headers, params=params, timeout=40)
@@ -44,24 +42,27 @@ def get_youtube_media(url: str):
         data = response.json()
         logger.info(f"Response keys: {list(data.keys())}")
 
-        # جستجو برای لینک دانلود
+        # جستجوی لینک دانلود
         download_url = None
+        formats = []
 
-        # مسیرهای مختلف ممکن
+        # مسیرهای احتمالی
         if isinstance(data, dict):
-            # مسیر 1: formats مستقیم
-            formats = data.get("formats") or data.get("streamingData", {}).get("formats", [])
-            if not formats:
-                formats = data.get("streamingData", {}).get("adaptiveFormats", [])
+            # اگر formats مستقیم داشته باشه
+            if "formats" in data:
+                formats = data.get("formats", [])
+            elif "streamingData" in data:
+                formats = data.get("streamingData", {}).get("formats", []) or data.get("streamingData", {}).get("adaptiveFormats", [])
 
+            # پیدا کردن بهترین لینک mp4
             for fmt in formats:
-                if fmt.get("url") and "video/mp4" in fmt.get("mimeType", ""):
-                    download_url = fmt["url"]
+                if fmt.get("url") and "video/mp4" in str(fmt.get("mimeType", "")):
+                    download_url = fmt.get("url")
                     break
 
             # fallback
             if not download_url:
-                for key in ["url", "play", "download_url", "video_url"]:
+                for key in ["url", "download_url", "play_url", "video_url"]:
                     if data.get(key):
                         download_url = data.get(key)
                         break
@@ -73,7 +74,7 @@ def get_youtube_media(url: str):
                 "caption": title[:900]
             }
         else:
-            logger.warning("No download URL found in the response")
+            logger.warning("No download URL found")
             return None
 
     except Exception as e:
