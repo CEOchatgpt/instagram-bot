@@ -15,8 +15,9 @@ YOUTUBE_RAPIDAPI_KEY = os.environ.get("YOUTUBE_RAPIDAPI_KEY", "").strip()
 # API Hosts
 # ────────────────────────────────────────────────────────────
 
-RAPIDAPI_HOST = "instagram120.p.rapidapi.com"
+RAPIDAPI_HOST_INSTAGRAM = "instagram120.p.rapidapi.com"
 RAPIDAPI_HOST_TIKTOK = "tiktok-api23.p.rapidapi.com"
+RAPIDAPI_HOST_YOUTUBE = "youtube-video-fast-downloader-24-7.p.rapidapi.com"
 
 # ────────────────────────────────────────────────────────────
 # Rate Limiting (می‌تونی توی environment variable تغییر بدی)
