@@ -1,217 +1,187 @@
 """
-سرویس دانلود ویدیو از یوتیوب برای ربات تلگرام
-سازگار با ساختار bot.py (async / await)
+سرویس دانلود ویدیو از یوتیوب با RapidAPI
+(جایگزین yt-dlp که روی سرور بلاک میشه)
 """
 
-import os
 import re
+import aiohttp
 import asyncio
 import logging
-import time
-from pathlib import Path
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Dict, Tuple
 
-import yt_dlp
+from config import YOUTUBE_RAPIDAPI_KEY
 
 logger = logging.getLogger(__name__)
 
-# ── تنظیمات ──────────────────────────────────────────────────
-DOWNLOAD_PATH = Path("downloads")
-DOWNLOAD_PATH.mkdir(exist_ok=True)
+MAX_DURATION_SECS = 15 * 60  # ۱۵ دقیقه
+MAX_RETRIES = 3
+RETRY_DELAY = 1
 
-# حداکثر مدت مجاز ویدیو (ثانیه) — ۱۵ دقیقه
-MAX_DURATION_SECS = 15 * 60
+RAPIDAPI_HOST_YOUTUBE = "youtube-video-fast-downloader.p.rapidapi.com"
 
-# الگوهای URL یوتیوب
 YOUTUBE_URL_PATTERNS = [
     re.compile(r'https?://(?:www\.|m\.)?youtube\.com/watch', re.IGNORECASE),
     re.compile(r'https?://(?:www\.)?youtu\.be/[\w-]+', re.IGNORECASE),
     re.compile(r'https?://(?:www\.|m\.)?youtube\.com/shorts/[\w-]+', re.IGNORECASE),
-    re.compile(r'https?://music\.youtube\.com/watch', re.IGNORECASE),
 ]
 
-# تنظیمات پایه yt-dlp
-BASE_OPTS: Dict = {
-    'quiet': True,
-    'no_warnings': True,
-    'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'logtostderr': False,
-    'user_agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/120.0.0.0 Safari/537.36'
-    ),
-}
-
-
-# ── Validation ────────────────────────────────────────────────
 
 def is_youtube_url(url: str) -> bool:
-    """بررسی معتبر بودن لینک یوتیوب"""
     return any(p.search(url) for p in YOUTUBE_URL_PATTERNS)
 
 
-# ── توابع sync (اجرا در thread pool) ─────────────────────────
-
-def _fetch_info(url: str) -> Optional[Dict]:
-    """
-    اطلاعات ویدیو رو بدون دانلود برمیگردونه (sync).
-    شامل: عنوان، مدت، uploader، thumbnail، کیفیت‌های موجود
-    """
-    try:
-        with yt_dlp.YoutubeDL(BASE_OPTS) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if not info:
-                return None
-
-            # کیفیت‌های ویدیویی معتبر
-            formats: List[Dict] = []
-            for f in info.get('formats', []):
-                h = f.get('height')
-                if h and h >= 360:
-                    size = f.get('filesize') or f.get('filesize_approx') or 0
-                    formats.append({
-                        'quality': str(h),
-                        'ext': f.get('ext', 'mp4'),
-                        'filesize_mb': round(size / (1024 * 1024), 1) if size else None,
-                    })
-
-            # حذف تکراری‌ها و مرتب‌سازی نزولی
-            seen = set()
-            unique_formats = []
-            for f in sorted(formats, key=lambda x: int(x['quality']), reverse=True):
-                if f['quality'] not in seen:
-                    seen.add(f['quality'])
-                    unique_formats.append(f)
-
-            return {
-                'title': info.get('title', 'ویدیوی بدون عنوان'),
-                'duration': info.get('duration', 0),
-                'uploader': info.get('uploader') or info.get('channel', 'نامشخص'),
-                'thumbnail': info.get('thumbnail', ''),
-                'formats': unique_formats,
-            }
-    except yt_dlp.utils.DownloadError as e:
-        logger.error(f"yt-dlp DownloadError in _fetch_info: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Unexpected error in _fetch_info: {e}")
-        return None
-
-
-def _download_video(url: str, quality: str) -> Tuple[bool, str, str]:
-    """
-    ویدیو رو دانلود میکنه و مسیر فایل رو برمیگردونه (sync).
-    Returns: (موفقیت, پیام, مسیر_فایل)
-    """
-    timestamp = int(time.time())
-    outtmpl = str(DOWNLOAD_PATH / f"yt_{timestamp}_%(title).60s.%(ext)s")
-
-    quality_formats = {
-        'best': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
-        '1080': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]',
-        '720':  'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]',
-        '480':  'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]',
-        '360':  'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]',
-        'audio': 'bestaudio/best',
-    }
-
-    is_audio = (quality == 'audio')
-    fmt = quality_formats.get(quality, quality_formats['720'])
-
-    ydl_opts: Dict = {
-        **BASE_OPTS,
-        'format': fmt,
-        'outtmpl': outtmpl,
-        'merge_output_format': 'mp3' if is_audio else 'mp4',
-    }
-
-    if is_audio:
-        ydl_opts['postprocessors'] = [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }]
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if not info:
-                return False, "اطلاعات ویدیو دریافت نشد", ""
-
-            # پیدا کردن فایل دانلود‌شده
-            filepath = ydl.prepare_filename(info)
-
-            # اگه پسوند عوض شده (merge) چک میکنیم
-            if not os.path.exists(filepath):
-                for ext in ('.mp4', '.mp3', '.webm', '.mkv', '.m4a'):
-                    candidate = Path(filepath).with_suffix(ext)
-                    if candidate.exists():
-                        filepath = str(candidate)
-                        break
-
-            if not os.path.exists(filepath):
-                return False, "فایل دانلود‌شده پیدا نشد", ""
-
-            title = info.get('title', 'ویدیو')
-            return True, title, filepath
-
-    except yt_dlp.utils.DownloadError as e:
-        logger.error(f"yt-dlp DownloadError: {e}")
-        return False, str(e), ""
-    except Exception as e:
-        logger.error(f"Unexpected error in _download_video: {e}")
-        return False, str(e), ""
-
-
-# ── توابع async (استفاده در bot.py) ──────────────────────────
-
-async def get_youtube_info(url: str) -> Optional[Dict]:
-    """
-    اطلاعات ویدیو رو async برمیگردونه.
-    مثال خروجی:
-    {
-        "title": "...",
-        "duration": 245,
-        "uploader": "...",
-        "thumbnail": "https://...",
-        "formats": [{"quality": "1080", "ext": "mp4", "filesize_mb": 85.2}, ...]
-    }
-    """
-    return await asyncio.to_thread(_fetch_info, url)
-
-
-async def download_youtube_video(url: str, quality: str = '720') -> Tuple[bool, str, str]:
-    """
-    ویدیو رو async دانلود میکنه.
-    
-    Args:
-        url: لینک یوتیوب
-        quality: کیفیت — 'best', '1080', '720', '480', '360', 'audio'
-    
-    Returns:
-        (موفقیت, عنوان_یا_خطا, مسیر_فایل)
-    """
-    return await asyncio.to_thread(_download_video, url, quality)
-
-
-def cleanup_file(filepath: str) -> None:
-    """فایل رو بعد از ارسال پاک میکنه"""
-    try:
-        if filepath and os.path.exists(filepath):
-            os.remove(filepath)
-            logger.info(f"Cleaned up: {filepath}")
-    except Exception as e:
-        logger.warning(f"Could not delete file {filepath}: {e}")
-
-
 def format_duration(seconds: int) -> str:
-    """مدت زمان رو به فرمت خوانا تبدیل میکنه"""
     if not seconds:
         return "نامشخص"
     m, s = divmod(int(seconds), 60)
     h, m = divmod(m, 60)
-    if h:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _extract_video_id(url: str) -> Optional[str]:
+    patterns = [
+        r'(?:v=|youtu\.be/|shorts/)([\w-]{11})',
+    ]
+    for p in patterns:
+        m = re.search(p, url)
+        if m:
+            return m.group(1)
+    return None
+
+
+async def get_youtube_info(url: str) -> Optional[Dict]:
+    """
+    اطلاعات ویدیو رو از RapidAPI میگیره.
+    خروجی: {"title", "duration", "uploader", "thumbnail", "formats", "video_id"}
+    """
+    video_id = _extract_video_id(url)
+    if not video_id:
+        logger.error(f"Could not extract video ID from: {url}")
+        return None
+
+    if not YOUTUBE_RAPIDAPI_KEY:
+        logger.error("YOUTUBE_RAPIDAPI_KEY is not set!")
+        return None
+
+    headers = {
+        "X-RapidAPI-Key": YOUTUBE_RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST_YOUTUBE,
+    }
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://{RAPIDAPI_HOST_YOUTUBE}/",
+                    headers=headers,
+                    params={"id": video_id},
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as resp:
+                    if resp.status == 404:
+                        logger.warning("YouTube video not found")
+                        return None
+                    if resp.status != 200:
+                        logger.warning(f"YouTube API {resp.status} — attempt {attempt}")
+                        if resp.status < 500:
+                            return None
+                    else:
+                        data = await resp.json()
+                        return _parse_info(data, video_id)
+        except asyncio.TimeoutError:
+            logger.warning(f"YouTube API timeout — attempt {attempt}")
+        except Exception as e:
+            logger.error(f"YouTube API error: {e}")
+            return None
+
+        if attempt < MAX_RETRIES:
+            await asyncio.sleep(RETRY_DELAY * (2 ** (attempt - 1)))
+
+    return None
+
+
+def _parse_info(data: dict, video_id: str) -> Optional[Dict]:
+    if not data:
+        return None
+
+    formats = []
+    seen = set()
+
+    # ساختار پاسخ این API: لیستی از لینک‌ها با quality
+    for item in data.get("links", []):
+        quality = str(item.get("quality", "")).replace("p", "")
+        url = item.get("url", "")
+        ext = item.get("extension", "mp4")
+
+        # فقط فرمت‌های ویدیویی
+        if quality.isdigit() and url and quality not in seen:
+            seen.add(quality)
+            formats.append({
+                "quality": quality,
+                "url": url,
+                "ext": ext,
+            })
+
+    formats.sort(key=lambda x: int(x["quality"]), reverse=True)
+
+    # اطلاعات اصلی
+    duration = data.get("duration", 0)
+    # بعضی API‌ها duration رو به صورت "MM:SS" میدن
+    if isinstance(duration, str) and ":" in duration:
+        parts = duration.split(":")
+        if len(parts) == 2:
+            duration = int(parts[0]) * 60 + int(parts[1])
+        elif len(parts) == 3:
+            duration = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    duration = int(duration) if duration else 0
+
+    return {
+        "title": data.get("title", "ویدیوی یوتیوب"),
+        "duration": duration,
+        "uploader": data.get("channel", data.get("author", "نامشخص")),
+        "thumbnail": data.get("thumb", data.get("thumbnail", "")),
+        "formats": formats,
+        "video_id": video_id,
+    }
+
+
+async def get_youtube_direct_url(url: str, quality: str = "720") -> Tuple[bool, str, str]:
+    """
+    لینک مستقیم دانلود رو برمیگردونه — بدون دانلود روی سرور.
+    Returns: (موفقیت, عنوان_یا_خطا, direct_url)
+    """
+    info = await get_youtube_info(url)
+    if not info:
+        return False, "اطلاعات ویدیو دریافت نشد", ""
+
+    formats = info.get("formats", [])
+    if not formats:
+        return False, "هیچ فرمتی پیدا نشد", ""
+
+    # انتخاب بهترین کیفیت مطابق درخواست
+    chosen = None
+    if quality == "best":
+        chosen = formats[0]
+    else:
+        target = int(quality)
+        for f in formats:
+            if int(f["quality"]) <= target:
+                chosen = f
+                break
+        if not chosen:
+            chosen = formats[-1]  # پایین‌ترین کیفیت موجود
+
+    return True, info["title"], chosen["url"]
+
+
+# برای سازگاری با bot.py — ارسال مستقیم URL به تلگرام (بدون دانلود روی سرور)
+async def download_youtube_video(url: str, quality: str = "720") -> Tuple[bool, str, str]:
+    """
+    سازگار با bot.py — لینک مستقیم رو برمیگردونه.
+    Returns: (موفقیت, عنوان, direct_url)
+    """
+    return await get_youtube_direct_url(url, quality)
+
+
+def cleanup_file(filepath: str) -> None:
+    """در این نسخه فایلی دانلود نمیشه — تابع خالی برای سازگاری"""
+    pass
