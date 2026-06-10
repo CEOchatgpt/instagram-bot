@@ -1,5 +1,7 @@
 # bot.py
 
+import aiohttp
+from io import BytesIO
 import logging  # کتابخونه‌ی استاندارد پایتون برای ثبت لاگ (پیام‌های خطا و اطلاعاتی)
 import time     # برای گرفتن زمان فعلی و محاسبه فاصله بین درخواست‌ها
 from collections import defaultdict  # دیکشنری با مقدار پیش‌فرض — برای ساختن تاریخچه هر کاربر
@@ -130,13 +132,38 @@ async def handle_link(update: Update, context):
                 InlineKeyboardButton("📁 فایل", callback_data="send_file"),
             ]
         ])
-        await update.message.reply_text("به چه صورت بفرستم؟", reply_markup=keyboard)
+       await update.message.reply_text(
+    "✨ نوع ارسال را انتخاب کن\n\n"
+    "📷 عکس معمولی\n"
+    "• نمایش مستقیم داخل تلگرام\n\n"
+    "📁 فایل\n"
+    "• کیفیت اصلی بدون فشرده سازی",
+    reply_markup=keyboard
+)
 
     except Exception as e:
         logger.error(f"Error: {e}")
         await processing_msg.edit_text(f"❌ خطایی رخ داد: {str(e)}")
 
+# ─────────────────────────────────────────────────────────────
+# دانلود فایل از URL
+# علت:
+# بعضی URL های اینستاگرام وقتی مستقیم به تلگرام داده میشن،
+# تلگرام اونها رو به صورت Document تشخیص میده.
+# با دانلود فایل و ارسال مستقیم، عکس حتماً به صورت Photo ارسال میشه.
+# ─────────────────────────────────────────────────────────────
+async def download_media(url: str, filename: str):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
 
+            data = await response.read()
+
+            file_obj = BytesIO(data)
+            file_obj.name = filename
+
+            return file_obj
+            
 # هندلر کلیک دکمه — وقتی کاربر روی "عکس معمولی" یا "فایل" کلیک میکنه اجرا میشه
 async def handle_format_choice(update: Update, context):
     query = update.callback_query  # اطلاعات کلیک رو میگیره
@@ -191,29 +218,67 @@ async def handle_format_choice(update: Update, context):
                     caption=caption
                 )
 
-        else:
-            # کاروسل — چند مدیا رو گروهی میفرسته
-            media_group = []
-            for i, item in enumerate(items):
-                c = caption if i == 0 else None  # کپشن فقط روی اولین آیتم
+       else:
+    # ─────────────────────────────────────────────────────────
+    # ارسال کاروسل
+    # ─────────────────────────────────────────────────────────
+    media_group = []
 
-                if item["type"] == "video":
-                    # ویدیو همیشه InputMediaVideo میشه
-                    media_group.append(InputMediaVideo(media=item["url"], caption=c))
-                elif as_file:
-                    # اگه کاربر "فایل" انتخاب کرده، از InputMediaDocument استفاده میکنیم
-                    # این باعث میشه عکس‌ها بدون فشرده‌سازی فرستاده بشن
-                    media_group.append(InputMediaDocument(media=item["url"], caption=c))
-                else:
-                    # عکس معمولی توی گروه مدیا
-                    media_group.append(InputMediaPhoto(media=item["url"], caption=c))
+    for i, item in enumerate(items):
 
-            # تلگرام حداکثر ۱۰ مدیا در یه گروه قبول میکنه، پس هر ۱۰ تا رو جداگانه میفرسته
-            for i in range(0, len(media_group), 10):
-                await context.bot.send_media_group(
-                    chat_id=update.effective_chat.id,
-                    media=media_group[i:i+10]
+        # کپشن فقط روی اولین آیتم نمایش داده میشه
+        c = caption if i == 0 else None
+
+        if item["type"] == "video":
+
+            # ویدیوها رو مستقیم اضافه میکنیم
+            media_group.append(
+                InputMediaVideo(
+                    media=item["url"],
+                    caption=c
                 )
+            )
+
+        elif as_file:
+
+            # ─────────────────────────────────────────────
+            # حالت فایل:
+            # عکس بدون فشرده سازی ارسال میشه
+            # ─────────────────────────────────────────────
+            media_group.append(
+                InputMediaDocument(
+                    media=item["url"],
+                    caption=c
+                )
+            )
+
+        else:
+
+            # ─────────────────────────────────────────────
+            # حالت عکس معمولی:
+            # اول دانلود میکنیم تا تلگرام مطمئن بشه Photo هست
+            # و به Document تبدیلش نکنه
+            # ─────────────────────────────────────────────
+
+            photo_file = await download_media(
+                item["url"],
+                f"photo_{i}.jpg"
+            )
+
+            media_group.append(
+                InputMediaPhoto(
+                    media=photo_file,
+                    caption=c
+                )
+            )
+
+    # تلگرام حداکثر ۱۰ آیتم در هر آلبوم قبول میکنه
+    for i in range(0, len(media_group), 10):
+
+        await context.bot.send_media_group(
+            chat_id=update.effective_chat.id,
+            media=media_group[i:i + 10]
+        )
 
         await sending_msg.delete()  # پیام "در حال ارسال..." رو حذف میکنه
 
