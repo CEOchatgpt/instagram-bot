@@ -1,80 +1,38 @@
-# config.py
 import os
 import sys
 
-# ────────────────────────────────────────────────────────────
-# بارگذاری متغیرهای محیطی (Environment Variables)
-# ────────────────────────────────────────────────────────────
+# ====================== تنظیمات اصلی ======================
 
+# توکن ربات تلگرام
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+
+# کلید RapidAPI (برای همه سرویس‌ها: Instagram + YouTube + ...)
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "").strip()
-TIKTOK_RAPIDAPI_KEY = os.environ.get("TIKTOK_RAPIDAPI_KEY", "").strip()
-YOUTUBE_RAPIDAPI_KEY = os.environ.get("YOUTUBE_RAPIDAPI_KEY", "").strip()
 
-# ────────────────────────────────────────────────────────────
-# API Hosts
-# ────────────────────────────────────────────────────────────
+# تنظیمات Rate Limit
+RATE_LIMIT = int(os.environ.get("RATE_LIMIT", 5))      # تعداد درخواست مجاز
+WINDOW_SECS = int(os.environ.get("WINDOW_SECS", 60))   # در هر چند ثانیه
 
-RAPIDAPI_HOST_INSTAGRAM = "instagram120.p.rapidapi.com"
-RAPIDAPI_HOST_TIKTOK = "tiktok-api23.p.rapidapi.com"
-RAPIDAPI_HOST_YOUTUBE = "youtube-video-fast-downloader-24-7.p.rapidapi.com"
-
-# ────────────────────────────────────────────────────────────
-# Rate Limiting (می‌تونی توی environment variable تغییر بدی)
-# ────────────────────────────────────────────────────────────
-
-RATE_LIMIT = int(os.environ.get("RATE_LIMIT", 3))
-WINDOW_SECS = int(os.environ.get("WINDOW_SECS", 60))
-
-# ────────────────────────────────────────────────────────────
-# Validation (چک کردن اجباری توکن‌ها)
-# ────────────────────────────────────────────────────────────
+# ====================== اعتبارسنجی ======================
 
 def validate_config():
-    """تمام تنظیمات رو چک میکنه. اگه مشکل باشه، خطا میده"""
     errors = []
-    
+
     if not BOT_TOKEN:
-        errors.append("❌ متغیر BOT_TOKEN تنظیم نشده!")
-    
+        errors.append("❌ BOT_TOKEN تنظیم نشده است!")
+
     if not RAPIDAPI_KEY:
-        errors.append("❌ متغیر RAPIDAPI_KEY تنظیم نشده!")
-    
-    if not YOUTUBE_RAPIDAPI_KEY:
-        errors.append("⚠️  متغیر YOUTUBE_RAPIDAPI_KEY تنظیم نشده (YouTube کار نمیکنه!)")
-    if not TIKTOK_RAPIDAPI_KEY:
-        errors.append("⚠️  متغیر TIKTOK_RAPIDAPI_KEY تنظیم نشده (TikTok کار نمیکنه!)")
-    
-    if RATE_LIMIT <= 0:
-        errors.append("❌ RATE_LIMIT باید از ۰ بیشتر باشه!")
-    
-    if WINDOW_SECS <= 0:
-        errors.append("❌ WINDOW_SECS باید از ۰ بیشتر باشه!")
-    
-    # خطاهای جدی رو print کن
+        errors.append("⚠️ RAPIDAPI_KEY تنظیم نشده است! (دانلود از اینستاگرام و یوتیوب کار نمی‌کند)")
+
     if errors:
-        for error in errors:
-            print(error)
-        
-        # اگه توکن‌های اصلی نباشن، بند کن
-        if not BOT_TOKEN or not RAPIDAPI_KEY:
-            print("\n❌ توکن‌های اجباری موجود نیستن. بند شدم.")
-            sys.exit(1)
-        else:
-            print("\n⚠️  برخی توکن‌ها موجود نیستن — برخی ویژگی‌ها کار نمیکنند!")
+        print("\n".join(errors))
+        print("\n💡 راهنما:")
+        print("   • در محیط لوکال: فایل .env بساز یا متغیرها را export کن")
+        print("   • در Heroku/Railway: در Settings > Config Vars اضافه کن")
+        sys.exit(1)
 
-# هنگام import این فایل، validation رو انجام بده
+    print("✅ تنظیمات config.py با موفقیت لود شد")
+
+
+# اجرای اعتبارسنجی هنگام ایمپورت
 validate_config()
-
-# ────────────────────────────────────────────────────────────
-# Debug Info (اختیاری)
-# ────────────────────────────────────────────────────────────
-
-DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
-
-if DEBUG:
-    print("🔧 DEBUG MODE ENABLED")
-    print(f"  Rate Limit: {RATE_LIMIT} req / {WINDOW_SECS} sec")
-    print(f"  BOT_TOKEN: {'✅' if BOT_TOKEN else '❌'}")
-    print(f"  RAPIDAPI_KEY: {'✅' if RAPIDAPI_KEY else '❌'}")
-    print(f"  TIKTOK_RAPIDAPI_KEY: {'✅' if TIKTOK_RAPIDAPI_KEY else '❌'}")
