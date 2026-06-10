@@ -1,6 +1,8 @@
 # bot.py
 
 import logging  # کتابخونه‌ی استاندارد پایتون برای ثبت لاگ (پیام‌های خطا و اطلاعاتی)
+import time     # برای گرفتن زمان فعلی و محاسبه فاصله بین درخواست‌ها
+from collections import defaultdict  # دیکشنری با مقدار پیش‌فرض — برای ساختن تاریخچه هر کاربر
 
 from telegram import Update, InputMediaVideo, InputMediaPhoto  # کلاس‌های اصلی تلگرام
 from telegram.ext import Application, CommandHandler, MessageHandler, filters  # ابزارهای ساخت ربات
@@ -15,22 +17,68 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)  # یه logger مخصوص این فایل میسازه
 
+# ── تنظیمات Rate Limiting ──────────────────────────────────────────────────
+RATE_LIMIT  = 3   # هر کاربر حداکثر این تعداد درخواست میتونه توی پنجره زمانی بده
+WINDOW_SECS = 60  # پنجره زمانی به ثانیه — بعد از این مدت، شمارنده ریست میشه
+
+# دیکشنری که برای هر user_id یه لیست از زمان‌های درخواست نگه میداره
+# defaultdict(list) یعنی اگه کاربر جدید بود، خودش لیست خالی میسازه
+user_requests: dict[int, list[float]] = defaultdict(list)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def is_rate_limited(user_id: int) -> tuple[bool, int]:
+    """
+    چک میکنه آیا کاربر به حد مجاز رسیده یا نه.
+    خروجی: (آیا محدود شده؟, چند ثانیه باید صبر کنه)
+    """
+    now = time.time()  # زمان فعلی به ثانیه (عدد اعشاری مثل 1718000000.45)
+
+    # فقط درخواست‌هایی که توی پنجره زمانی هستن رو نگه میداره، قدیمی‌ترها رو حذف میکنه
+    user_requests[user_id] = [
+        t for t in user_requests[user_id]
+        if now - t < WINDOW_SECS  # اگه کمتر از WINDOW_SECS ثانیه پیش بود، نگهش میداره
+    ]
+
+    # چک میکنه تعداد درخواست‌های باقیمونده به حد مجاز رسیده یا نه
+    if len(user_requests[user_id]) >= RATE_LIMIT:
+        # قدیمی‌ترین درخواست رو پیدا میکنه و حساب میکنه چقدر باید صبر کنه
+        oldest = user_requests[user_id][0]
+        wait_secs = int(WINDOW_SECS - (now - oldest)) + 1  # +1 برای اطمینان
+        return True, wait_secs  # محدود شده
+
+    # محدود نشده — زمان این درخواست رو به تاریخچه اضافه میکنه
+    user_requests[user_id].append(now)
+    return False, 0  # آزاده
+
 
 # هندلر دستور /start — وقتی کاربر ربات رو شروع میکنه اجرا میشه
 async def start(update: Update, context):
     await update.message.reply_text(
-        "🎬 سلام! لینک پست اینستاگرام رو بفرست تا برات بفرستم."
+        "🎬 سلام! لینک پست اینستاگرام رو بفرست تا برات بفرستم.\n\n"
+        f"⚠️ محدودیت: هر {WINDOW_SECS} ثانیه، {RATE_LIMIT} درخواست"
     )
 
 
 # هندلر اصلی — هر بار که کاربر یه متن (غیر از دستور) بفرسته اجرا میشه
 async def handle_link(update: Update, context):
     url = update.message.text.strip()  # متن پیام رو میگیره و فاصله‌های اضافه رو حذف میکنه
+    user_id = update.effective_user.id  # آیدی یکتای کاربر تلگرام رو میگیره
 
     # چک میکنه لینک واقعاً اینستاگرام باشه
     if "instagram.com" not in url:
         await update.message.reply_text("❌ فقط لینک اینستاگرام قبول میکنم!")
         return  # اگه اینستاگرام نبود، ادامه نمیده
+
+    # ── بررسی Rate Limit ──────────────────────────────────────────────────
+    limited, wait = is_rate_limited(user_id)
+    if limited:
+        # به کاربر میگه چقدر باید صبر کنه
+        await update.message.reply_text(
+            f"⏳ زیادی سریع! {wait} ثانیه دیگه امتحان کن."
+        )
+        return  # بدون پردازش برمیگرده
+    # ──────────────────────────────────────────────────────────────────────
 
     # یه پیام "در حال پردازش" میفرسته تا کاربر بدونه داره کار میکنه
     processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
