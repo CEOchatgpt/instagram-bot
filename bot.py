@@ -1,118 +1,129 @@
-# url_validator.py - تابع‌های جدید برای validation
+import aiohttp
+from io import BytesIO
+import logging
+import time
+import asyncio
+from collections import defaultdict
 
-import re
-from typing import Tuple
-
-# عبارات منظم برای validation
-INSTAGRAM_URL_PATTERN = re.compile(
-    r'https?://(?:www\.)?instagram\.com/(?:p|reel|tv|stories)/[\w-]+/?',
-    re.IGNORECASE
+from telegram import (
+    Update,
+    InputMediaVideo,
+    InputMediaPhoto,
+    InputMediaDocument,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
 )
 
-# TikTok URLs می‌تونند خیلی متنوع باشن
-TIKTOK_URL_PATTERNS = [
-    re.compile(r'https?://(?:www\.)?tiktok\.com/@[\w.-]+/video/\d+', re.IGNORECASE),
-    re.compile(r'https?://(?:www\.)?tiktok\.com/v/\d+', re.IGNORECASE),
-    re.compile(r'https?://vm\.tiktok\.com/[\w]+/?', re.IGNORECASE),
-    re.compile(r'https?://vt\.tiktok\.com/[\w]+/?', re.IGNORECASE),
-]
+from config import BOT_TOKEN
+from rapidapi_service import get_instagram_media
+from services.tiktok_service import get_tiktok_media   # ← جدید
+
+# تنظیم لاگ
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# ── Rate Limiting ───────────────────────────────────────────────────
+RATE_LIMIT  = 3
+WINDOW_SECS = 60
+
+user_requests: dict[int, list[float]] = defaultdict(list)
+
+def is_rate_limited(user_id: int) -> tuple[bool, int]:
+    now = time.time()
+    user_requests[user_id] = [t for t in user_requests[user_id] if now - t < WINDOW_SECS]
+
+    if len(user_requests[user_id]) >= RATE_LIMIT:
+        oldest = user_requests[user_id][0]
+        wait_secs = int(WINDOW_SECS - (now - oldest)) + 1
+        return True, wait_secs
+
+    user_requests[user_id].append(now)
+    return False, 0
 
 
-def validate_and_detect_platform(url: str) -> Tuple[bool, str]:
-    """
-    URL رو validate می‌کنه و platform رو detect میکنه
-    
-    Returns:
-        (is_valid, platform) — platform میتونه "instagram", "tiktok", یا ""
-    """
-    url = url.strip()
-    
-    # چک Instagram
-    if INSTAGRAM_URL_PATTERN.search(url):
-        return True, "instagram"
-    
-    # چک TikTok
-    for pattern in TIKTOK_URL_PATTERNS:
-        if pattern.search(url):
-            return True, "tiktok"
-    
-    return False, ""
+async def start(update: Update, context):
+    await update.message.reply_text(
+        "🎬 سلام! لینک پست اینستاگرام یا تیک‌تاک رو بفرست.\n\n"
+        f"⚠️ محدودیت: هر {WINDOW_SECS} ثانیه، {RATE_LIMIT} درخواست"
+    )
 
 
-def is_valid_url_format(url: str) -> bool:
-    """بررسی اینکه URL فرمت صحیحی داره"""
-    url = url.strip()
-    return url.startswith(('http://', 'https://'))
+async def help_command(update: Update, context):
+    await update.message.reply_text(
+        "📖 راهنمای ربات\n\n"
+        "🔹 نحوه استفاده:\n"
+        "  لینک پست عمومی اینستاگرام یا تیک‌تاک رو بفرست\n\n"
+        "🔹 پلتفرم‌های پشتیبانی‌شده:\n"
+        "  • Instagram (پست، ریلز، کاروسل)\n"
+        "  • TikTok (ویدیو)\n\n"
+        "🔹 دستورات:\n"
+        "  /start — شروع ربات\n"
+        "  /help  — نمایش راهنما\n\n"
+        "⚡ ساخته‌شده با Python & python-telegram-bot"
+    )
 
 
-# ────────────────────────────────────────────────────────────
-# بخش جایگزین برای handle_link (بهتر)
-# ────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# ارسال ویدیو تیک‌تاک
+# ─────────────────────────────────────────────────────────────
+async def send_tiktok_video(message, media):
+    """ارسال ویدیو تیک‌تاک"""
+    try:
+        await message.reply_video(
+            video=media["url"],
+            caption=media.get("caption", "🎵 TikTok Video"),
+            supports_streaming=True
+        )
+    except Exception as e:
+        logger.error(f"Error sending tiktok video: {e}")
+        await message.reply_text("❌ خطا در ارسال ویدیو تیک‌تاک")
 
-async def handle_link_improved(update: Update, context):
-    """
-    بهبودشده‌ی handle_link با:
-    - بهتر URL validation
-    - بهتر logging
-    - بهتر error messages
-    """
+
+# هندلر اصلی لینک‌ها
+async def handle_link(update: Update, context):
     url = update.message.text.strip()
     user_id = update.effective_user.id
-    username = update.effective_user.username or f"user_{user_id}"
-    
-    # ۱. Validate URL Format
-    if not is_valid_url_format(url):
-        logger.warning(f"Invalid URL format from {username}: {url[:50]}")
-        await update.message.reply_text(
-            "❌ لینک نامعتبره!\n"
-            "لطفاً لینک کاملی بفرس (با http:// یا https://)"
-        )
+
+    url_lower = url.lower()
+
+    # تشخیص پلتفرم
+    if "instagram.com" in url_lower:
+        platform = "instagram"
+    elif "tiktok.com" in url_lower or "vm.tiktok.com" in url_lower:
+        platform = "tiktok"
+    else:
+        await update.message.reply_text("❌ فقط لینک اینستاگرام و تیک‌تاک قبول میکنم!")
         return
-    
-    # ۲. Detect Platform
-    is_valid, platform = validate_and_detect_platform(url)
-    if not is_valid:
-        logger.warning(f"Unsupported platform from {username}: {url[:50]}")
-        await update.message.reply_text(
-            "❌ این پلتفرم پشتیبانی نمی‌شه!\n\n"
-            "✅ پلتفرم‌های پشتیبانی:\n"
-            "  • Instagram (pst, reel, tv)\n"
-            "  • TikTok"
-        )
-        return
-    
-    # ۳. Rate Limit Check
+
+    # Rate Limit
     limited, wait = is_rate_limited(user_id)
     if limited:
-        logger.info(f"Rate limited: {username} — {wait}s remaining")
         await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه دیگه امتحان کن.")
         return
-    
-    # ۴. Processing Start
-    processing_msg = await update.message.reply_text(
-        f"🔄 در حال دانلود از {platform.capitalize()}..."
-    )
-    logger.info(f"{username} requested {platform}: {url}")
-    
+
+    processing_msg = await update.message.reply_text(f"🔄 در حال دانلود از {platform.capitalize()}...")
+
     try:
         if platform == "instagram":
             result = await get_instagram_media(url)
             
             if not result:
-                logger.warning(f"Failed to get Instagram media from {username}")
-                await processing_msg.edit_text(
-                    "❌ نتونستم محتوا رو پیدا کنم.\n\n"
-                    "⚠️ ممکن دلایل:\n"
-                    "  • لینک دسترسی‌پذیر نیست\n"
-                    "  • اکانت private است\n"
-                    "  • پست حذف شده"
-                )
+                await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم. لینک رو چک کن.")
                 return
-            
-            logger.info(f"Successfully downloaded Instagram media: {len(result['items'])} items")
+
             context.user_data["pending_result"] = result
             await processing_msg.delete()
-            
+
             keyboard = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton("📷 عکس معمولی", callback_data="send_photo"),
@@ -125,29 +136,117 @@ async def handle_link_improved(update: Update, context):
                 "📁 فایل → کیفیت اصلی",
                 reply_markup=keyboard
             )
-        
+
         else:  # TikTok
-            result = await get_tiktok_media(url)  # اگه async شد، بدون asyncio.to_thread
+            result = await asyncio.to_thread(get_tiktok_media, url)
             
             if not result or not result.get("url"):
-                logger.warning(f"Failed to get TikTok video from {username}")
-                await processing_msg.edit_text(
-                    "❌ نتونستم ویدیو تیک‌تاک رو دانلود کنم.\n\n"
-                    "⚠️ ممکن دلایل:\n"
-                    "  • لینک دسترسی‌پذیر نیست\n"
-                    "  • ویدیو محدود است\n"
-                    "  • ویدیو حذف شده"
-                )
+                await processing_msg.edit_text("❌ نتونستم ویدیو تیک‌تاک رو دانلود کنم.")
                 return
-            
-            logger.info(f"Successfully downloaded TikTok video from {username}")
+
             await processing_msg.delete()
             await send_tiktok_video(update.message, result)
-    
-    except asyncio.TimeoutError:
-        logger.error(f"Timeout while processing {platform} from {username}")
-        await processing_msg.edit_text("⏱️ زمان‌بندی منقضی شد. دوباره امتحان کن.")
-    
+
     except Exception as e:
-        logger.error(f"Unexpected error in handle_link: {e}", exc_info=True)
-        await processing_msg.edit_text("❌ خطایی ناشناخته رخ داد. دوباره امتحان کن.")
+        logger.error(f"Error in handle_link: {e}")
+        await processing_msg.edit_text(f"❌ خطایی رخ داد: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────
+# بقیه توابع (دانلود مدیا + انتخاب فرمت) بدون تغییر
+# ─────────────────────────────────────────────────────────────
+async def download_media(url: str, filename: str):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            data = await response.read()
+            file_obj = BytesIO(data)
+            file_obj.name = filename
+            return file_obj
+
+
+async def handle_format_choice(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+
+    as_file = (query.data == "send_file")
+    result = context.user_data.get("pending_result")
+
+    if not result:
+        await query.edit_message_text("❌ اطلاعات منقضی شده. لینک رو دوباره بفرست.")
+        return
+
+    caption = result["caption"]
+    items = result["items"]
+
+    await query.delete_message()
+
+    sending_msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📤 در حال ارسال..."
+    )
+
+    try:
+        if len(items) == 1:
+            item = items[0]
+            if item["type"] == "video":
+                await context.bot.send_video(
+                    chat_id=update.effective_chat.id,
+                    video=item["url"],
+                    supports_streaming=not as_file,
+                    caption=caption
+                )
+            elif as_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=item["url"],
+                    caption=caption
+                )
+            else:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=item["url"],
+                    caption=caption
+                )
+
+        else:
+            # کاروسل
+            media_group = []
+            for i, item in enumerate(items):
+                c = caption if i == 0 else None
+                if item["type"] == "video":
+                    media_group.append(InputMediaVideo(media=item["url"], caption=c))
+                elif as_file:
+                    media_group.append(InputMediaDocument(media=item["url"], caption=c))
+                else:
+                    photo_file = await download_media(item["url"], f"photo_{i}.jpg")
+                    media_group.append(InputMediaPhoto(media=photo_file, caption=c))
+
+            for i in range(0, len(media_group), 10):
+                await context.bot.send_media_group(
+                    chat_id=update.effective_chat.id,
+                    media=media_group[i:i + 10]
+                )
+
+        await sending_msg.delete()
+        context.user_data.pop("pending_result", None)
+
+    except Exception as e:
+        logger.error(f"Error sending media: {e}")
+        await sending_msg.edit_text(f"❌ خطا در ارسال: {str(e)}")
+
+
+def main():
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+    application.add_handler(CallbackQueryHandler(handle_format_choice))
+
+    print("🤖 ربات با پشتیبانی TikTok + Instagram شروع به کار کرد...")
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
