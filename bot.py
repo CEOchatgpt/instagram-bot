@@ -24,72 +24,7 @@ from telegram.ext import (
 from config import BOT_TOKEN
 from rapidapi_service import get_instagram_media
 from services.tiktok_service import get_tiktok_media   # ← جدید
-
-import os
-import telebot
-from config import BOT_TOKEN
-from services.youtube_service import YouTubeDownloader
-from instagrapi import Client
-
-# راه‌اندازی ربات تلگرام (برای دریافت لینک از کاربر)
-bot = telebot.TeleBot(BOT_TOKEN)
-
-# راه‌اندازی دانلودر یوتیوب
-youtube_dl = YouTubeDownloader()
-
-# راه‌اندازی کلاینت اینستاگرام
-ig_client = Client()
-
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, 
-        "🎬 سلام! من ربات دانلود یوتیوب هستم\n\n"
-        "لینک یوتیوب را بفرست تا برات دانلود کنم.\n"
-        "📌 کیفیت‌های موجود:\n"
-        "/best - بهترین کیفیت\n"
-        "/720 - کیفیت 720p\n"
-        "/1080 - کیفیت 1080p\n"
-        "/audio - فقط صوت (MP3)"
-    )
-
-@bot.message_handler(func=lambda m: youtube_dl.is_youtube_url(m.text))
-def handle_youtube_link(message):
-    url = message.text.strip()
-    
-    # تشخیص کیفیت درخواستی از دستور قبلی (ساده شده)
-    quality = '720'  # پیش‌فرض
-    
-    bot.reply_to(message, "⏳ در حال دانلود ویدیو... لطفاً صبر کنید")
-    
-    # دانلود ویدیو
-    success, msg, file_path = youtube_dl.download_video(url, quality)
-    
-    if success and os.path.exists(file_path):
-        # ارسال به تلگرام (برای تست)
-        with open(file_path, 'rb') as video:
-            bot.send_video(message.chat.id, video, caption=msg)
-        
-        # اگر می‌خواهی به اینستاگرام هم ارسال کنی:
-        # ig_client.login(IG_USERNAME, IG_PASSWORD)
-        # ig_client.video_upload(file_path, caption="دانلود شده از یوتیوب")
-        
-        # پاک کردن فایل موقت
-        os.remove(file_path)
-    else:
-        bot.reply_to(message, msg)
-    
-    # پاکسازی فایل‌های قدیمی (اختیاری)
-    youtube_dl.clean_old_files(hours=2)
-
-@bot.message_handler(commands=['info'])
-def get_video_info(message):
-    # اینجا می‌تونی قبل از دانلود اطلاعات ویدیو رو بگیری
-    pass
-
-if __name__ == "__main__":
-    print("ربات روشن شد...")
-    bot.infinity_polling()
-
+from services.yt_dlp_service import get_tiktok_media_yt_dlp   # ← جایگزین import قبلی
 
 # تنظیم لاگ
 logging.basicConfig(
@@ -145,16 +80,32 @@ async def help_command(update: Update, context):
 async def send_tiktok_video(message, media):
     """ارسال ویدیو تیک‌تاک"""
     try:
-        await message.reply_video(
-            video=media["url"],
-            caption=media.get("caption", "🎵 TikTok Video"),
-            supports_streaming=True
-        )
+        processing = await message.reply_text("📥 در حال دانلود و ارسال ویدیو...")
+
+        video_file = await download_video_for_telegram(media["url"])
+
+        if video_file:
+            await message.reply_video(
+                video=video_file,
+                caption=media.get("caption", "🎵 TikTok Video"),
+                supports_streaming=True,
+                read_timeout=120,
+                write_timeout=120
+            )
+        else:
+            # fallback مستقیم (اگر دانلود نشد)
+            await message.reply_video(
+                video=media["url"],
+                caption=media.get("caption", "🎵 TikTok Video"),
+                supports_streaming=True
+            )
+        
+        await processing.delete()
+        
     except Exception as e:
-        logger.error(f"Error sending tiktok video: {e}")
-        await message.reply_text("❌ خطا در ارسال ویدیو تیک‌تاک")
-
-
+        logger.error(f"Error sending tiktok video: {e}", exc_info=True)
+        await message.reply_text("❌ خطا در ارسال ویدیو.\nممکنه حجم ویدیو زیاد باشه یا لینک مشکل داشته باشه.\nبعداً دوباره امتحان کن.")
+        
 # هندلر اصلی لینک‌ها
 async def handle_link(update: Update, context):
     url = update.message.text.strip()
@@ -204,7 +155,8 @@ async def handle_link(update: Update, context):
             )
 
         else:  # TikTok
-            result = await asyncio.to_thread(get_tiktok_media, url)
+            await processing_msg.edit_text("🔄 در حال دانلود با yt-dlp (بدون واترمارک)...")
+            result = await get_tiktok_media_yt_dlp(url)
             
             if not result or not result.get("url"):
                 await processing_msg.edit_text("❌ نتونستم ویدیو تیک‌تاک رو دانلود کنم.")
