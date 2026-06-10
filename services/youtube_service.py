@@ -1,216 +1,217 @@
 """
-سرویس دانلود ویدیو از یوتیوب برای ربات اینستاگرام
-@author: CEOchatgpt
-@date: June 2026
+سرویس دانلود ویدیو از یوتیوب برای ربات تلگرام
+سازگار با ساختار bot.py (async / await)
 """
 
 import os
 import re
 import asyncio
+import logging
+import time
 from pathlib import Path
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, List
+
 import yt_dlp
-from datetime import datetime
 
-class YouTubeDownloader:
-    """کلاس اصلی دانلودر یوتیوب"""
-    
-    def __init__(self, download_path: str = "downloads"):
-        """
-        راه‌اندازی دانلودر
-        
-        Args:
-            download_path: مسیر ذخیره فایل‌های دانلود شده
-        """
-        self.download_path = Path(download_path)
-        self.download_path.mkdir(exist_ok=True)
-        
-        # تنظیمات پایه yt-dlp
-        self.base_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'force_generic_extractor': False,
-            'nocheckcertificate': True,
-            'ignoreerrors': True,
-            'logtostderr': False,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-    
-    def is_youtube_url(self, url: str) -> bool:
-        """بررسی معتبر بودن لینک یوتیوب"""
-        youtube_patterns = [
-            r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/',
-            r'(https?://)?(www\.)?(m\.youtube\.com)/',
-            r'(https?://)?(www\.)?(music\.youtube\.com)/'
-        ]
-        return any(re.match(pattern, url) for pattern in youtube_patterns)
-    
-    def get_video_info(self, url: str) -> Optional[Dict]:
-        """
-        دریافت اطلاعات ویدیو بدون دانلود
-        
-        Returns:
-            دیکشنری شامل عنوان، مدت زمان، سایز، کیفیت‌های موجود
-        """
-        try:
-            with yt_dlp.YoutubeDL(self.base_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-                return {
-                    'title': info.get('title', 'Unknown'),
-                    'duration': info.get('duration', 0),
-                    'views': info.get('view_count', 0),
-                    'uploader': info.get('uploader', 'Unknown'),
-                    'upload_date': info.get('upload_date', 'Unknown'),
-                    'thumbnail': info.get('thumbnail', ''),
-                    'formats': [{
-                        'quality': f.get('height', 'audio'),
-                        'ext': f.get('ext', 'unknown'),
-                        'filesize': f.get('filesize', 0),
-                        'format_note': f.get('format_note', '')
-                    } for f in info.get('formats', []) if f.get('height') or f.get('acodec') != 'none']
-                }
-        except Exception as e:
-            print(f"خطا در دریافت اطلاعات: {e}")
-            return None
-    
-    def download_video(
-        self, 
-        url: str, 
-        quality: str = 'best',
-        custom_name: Optional[str] = None
-    ) -> Tuple[bool, str, str]:
-        """
-        دانلود ویدیو از یوتیوب
-        
-        Args:
-            url: لینک ویدیو
-            quality: کیفیت مورد نظر (best, 2160, 1440, 1080, 720, 480, 360, audio)
-            custom_name: نام دلخواه برای فایل (بدون پسوند)
-            
-        Returns:
-            (موفقیت, پیام, مسیر فایل)
-        """
-        try:
-            # تنظیم نام فایل
-            if custom_name:
-                filename = f"{custom_name}_%(title)s.%(ext)s"
-            else:
-                filename = f"youtube_%(title)s_{datetime.now().strftime('%Y%m%d_%H%M%S')}.%(ext)s"
-            
-            # تنظیمات کیفیت
-            quality_opts = self._get_quality_settings(quality)
-            
-            # ترکیب تنظیمات
-            ydl_opts = {
-                **self.base_opts,
-                **quality_opts,
-                'outtmpl': str(self.download_path / filename)
+logger = logging.getLogger(__name__)
+
+# ── تنظیمات ──────────────────────────────────────────────────
+DOWNLOAD_PATH = Path("downloads")
+DOWNLOAD_PATH.mkdir(exist_ok=True)
+
+# حداکثر مدت مجاز ویدیو (ثانیه) — ۱۵ دقیقه
+MAX_DURATION_SECS = 15 * 60
+
+# الگوهای URL یوتیوب
+YOUTUBE_URL_PATTERNS = [
+    re.compile(r'https?://(?:www\.|m\.)?youtube\.com/watch', re.IGNORECASE),
+    re.compile(r'https?://(?:www\.)?youtu\.be/[\w-]+', re.IGNORECASE),
+    re.compile(r'https?://(?:www\.|m\.)?youtube\.com/shorts/[\w-]+', re.IGNORECASE),
+    re.compile(r'https?://music\.youtube\.com/watch', re.IGNORECASE),
+]
+
+# تنظیمات پایه yt-dlp
+BASE_OPTS: Dict = {
+    'quiet': True,
+    'no_warnings': True,
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'user_agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/120.0.0.0 Safari/537.36'
+    ),
+}
+
+
+# ── Validation ────────────────────────────────────────────────
+
+def is_youtube_url(url: str) -> bool:
+    """بررسی معتبر بودن لینک یوتیوب"""
+    return any(p.search(url) for p in YOUTUBE_URL_PATTERNS)
+
+
+# ── توابع sync (اجرا در thread pool) ─────────────────────────
+
+def _fetch_info(url: str) -> Optional[Dict]:
+    """
+    اطلاعات ویدیو رو بدون دانلود برمیگردونه (sync).
+    شامل: عنوان، مدت، uploader، thumbnail، کیفیت‌های موجود
+    """
+    try:
+        with yt_dlp.YoutubeDL(BASE_OPTS) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                return None
+
+            # کیفیت‌های ویدیویی معتبر
+            formats: List[Dict] = []
+            for f in info.get('formats', []):
+                h = f.get('height')
+                if h and h >= 360:
+                    size = f.get('filesize') or f.get('filesize_approx') or 0
+                    formats.append({
+                        'quality': str(h),
+                        'ext': f.get('ext', 'mp4'),
+                        'filesize_mb': round(size / (1024 * 1024), 1) if size else None,
+                    })
+
+            # حذف تکراری‌ها و مرتب‌سازی نزولی
+            seen = set()
+            unique_formats = []
+            for f in sorted(formats, key=lambda x: int(x['quality']), reverse=True):
+                if f['quality'] not in seen:
+                    seen.add(f['quality'])
+                    unique_formats.append(f)
+
+            return {
+                'title': info.get('title', 'ویدیوی بدون عنوان'),
+                'duration': info.get('duration', 0),
+                'uploader': info.get('uploader') or info.get('channel', 'نامشخص'),
+                'thumbnail': info.get('thumbnail', ''),
+                'formats': unique_formats,
             }
-            
-            # دانلود
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                print(f"شروع دانلود: {url}")
-                info = ydl.extract_info(url, download=True)
-                
-                # پیدا کردن مسیر فایل دانلود شده
-                downloaded_file = ydl.prepare_filename(info)
-                
-                # اگر فایل با پسوند متفاوت ذخیره شده
-                if not os.path.exists(downloaded_file):
-                    for ext in ['.mp4', '.webm', '.mkv', '.m4a']:
-                        test_path = downloaded_file + ext
-                        if os.path.exists(test_path):
-                            downloaded_file = test_path
-                            break
-                
-                return True, f"✅ دانلود موفق: {info.get('title', 'ویدیو')}", downloaded_file
-                
-        except Exception as e:
-            return False, f"❌ خطا در دانلود: {str(e)}", ""
-    
-    def _get_quality_settings(self, quality: str) -> Dict:
-        """تنظیمات کیفیت بر اساس ورودی کاربر"""
-        quality_map = {
-            'best': {
-                'format': 'bestvideo+bestaudio/best',
-                'merge_output_format': 'mp4'
-            },
-            '2160': {
-                'format': 'bestvideo[height<=2160]+bestaudio/best[height<=2160]',
-                'merge_output_format': 'mp4'
-            },
-            '1440': {
-                'format': 'bestvideo[height<=1440]+bestaudio/best[height<=1440]',
-                'merge_output_format': 'mp4'
-            },
-            '1080': {
-                'format': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
-                'merge_output_format': 'mp4'
-            },
-            '720': {
-                'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
-                'merge_output_format': 'mp4'
-            },
-            '480': {
-                'format': 'bestvideo[height<=480]+bestaudio/best[height<=480]',
-                'merge_output_format': 'mp4'
-            },
-            '360': {
-                'format': 'bestvideo[height<=360]+bestaudio/best[height<=360]',
-                'merge_output_format': 'mp4'
-            },
-            'audio': {
-                'format': 'bestaudio/best',
-                'extractaudio': True,
-                'audioformat': 'mp3',
-                'outtmpl': str(self.download_path / '%(title)s.%(ext)s'),
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }]
-            }
-        }
-        
-        return quality_map.get(quality, quality_map['best'])
-    
-    def download_playlist(self, url: str, max_videos: int = 10) -> List[Tuple[bool, str, str]]:
-        """دانلود پلی‌لیست یوتیوب"""
-        results = []
-        
-        ydl_opts = {
-            **self.base_opts,
-            'format': 'best[height<=720]',
-            'outtmpl': str(self.download_path / '%(playlist_title)s/%(title)s.%(ext)s'),
-            'playlistend': max_videos
-        }
-        
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                results.append((True, f"پلی‌لیست {info.get('title', '')} دانلود شد", str(self.download_path)))
-        except Exception as e:
-            results.append((False, f"خطا: {e}", ""))
-        
-        return results
-    
-    def clean_old_files(self, hours: int = 24):
-        """پاکسازی فایل‌های قدیمی"""
-        import time
-        now = time.time()
-        
-        for file in self.download_path.glob("*"):
-            if file.is_file():
-                file_age_hours = (now - file.stat().st_mtime) / 3600
-                if file_age_hours > hours:
-                    file.unlink()
-                    print(f"فایل قدیمی حذف شد: {file.name}")
+    except yt_dlp.utils.DownloadError as e:
+        logger.error(f"yt-dlp DownloadError in _fetch_info: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error in _fetch_info: {e}")
+        return None
 
 
-# تابع کمکی سریع برای استفاده در bot.py
-def quick_download(url: str, quality: str = '720') -> Tuple[bool, str, str]:
-    """دانلود سریع با تنظیمات پیش‌فرض"""
-    downloader = YouTubeDownloader()
-    return downloader.download_video(url, quality)
+def _download_video(url: str, quality: str) -> Tuple[bool, str, str]:
+    """
+    ویدیو رو دانلود میکنه و مسیر فایل رو برمیگردونه (sync).
+    Returns: (موفقیت, پیام, مسیر_فایل)
+    """
+    timestamp = int(time.time())
+    outtmpl = str(DOWNLOAD_PATH / f"yt_{timestamp}_%(title).60s.%(ext)s")
+
+    quality_formats = {
+        'best': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+        '1080': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]',
+        '720':  'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]',
+        '480':  'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]',
+        '360':  'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]',
+        'audio': 'bestaudio/best',
+    }
+
+    is_audio = (quality == 'audio')
+    fmt = quality_formats.get(quality, quality_formats['720'])
+
+    ydl_opts: Dict = {
+        **BASE_OPTS,
+        'format': fmt,
+        'outtmpl': outtmpl,
+        'merge_output_format': 'mp3' if is_audio else 'mp4',
+    }
+
+    if is_audio:
+        ydl_opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }]
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if not info:
+                return False, "اطلاعات ویدیو دریافت نشد", ""
+
+            # پیدا کردن فایل دانلود‌شده
+            filepath = ydl.prepare_filename(info)
+
+            # اگه پسوند عوض شده (merge) چک میکنیم
+            if not os.path.exists(filepath):
+                for ext in ('.mp4', '.mp3', '.webm', '.mkv', '.m4a'):
+                    candidate = Path(filepath).with_suffix(ext)
+                    if candidate.exists():
+                        filepath = str(candidate)
+                        break
+
+            if not os.path.exists(filepath):
+                return False, "فایل دانلود‌شده پیدا نشد", ""
+
+            title = info.get('title', 'ویدیو')
+            return True, title, filepath
+
+    except yt_dlp.utils.DownloadError as e:
+        logger.error(f"yt-dlp DownloadError: {e}")
+        return False, str(e), ""
+    except Exception as e:
+        logger.error(f"Unexpected error in _download_video: {e}")
+        return False, str(e), ""
+
+
+# ── توابع async (استفاده در bot.py) ──────────────────────────
+
+async def get_youtube_info(url: str) -> Optional[Dict]:
+    """
+    اطلاعات ویدیو رو async برمیگردونه.
+    مثال خروجی:
+    {
+        "title": "...",
+        "duration": 245,
+        "uploader": "...",
+        "thumbnail": "https://...",
+        "formats": [{"quality": "1080", "ext": "mp4", "filesize_mb": 85.2}, ...]
+    }
+    """
+    return await asyncio.to_thread(_fetch_info, url)
+
+
+async def download_youtube_video(url: str, quality: str = '720') -> Tuple[bool, str, str]:
+    """
+    ویدیو رو async دانلود میکنه.
+    
+    Args:
+        url: لینک یوتیوب
+        quality: کیفیت — 'best', '1080', '720', '480', '360', 'audio'
+    
+    Returns:
+        (موفقیت, عنوان_یا_خطا, مسیر_فایل)
+    """
+    return await asyncio.to_thread(_download_video, url, quality)
+
+
+def cleanup_file(filepath: str) -> None:
+    """فایل رو بعد از ارسال پاک میکنه"""
+    try:
+        if filepath and os.path.exists(filepath):
+            os.remove(filepath)
+            logger.info(f"Cleaned up: {filepath}")
+    except Exception as e:
+        logger.warning(f"Could not delete file {filepath}: {e}")
+
+
+def format_duration(seconds: int) -> str:
+    """مدت زمان رو به فرمت خوانا تبدیل میکنه"""
+    if not seconds:
+        return "نامشخص"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
