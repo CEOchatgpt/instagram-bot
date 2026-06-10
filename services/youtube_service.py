@@ -1,12 +1,14 @@
 import requests
 import re
 import logging
-from config import RAPIDAPI_KEY
+from config import (
+    RAPIDAPI_KEY_YOUTUBE, 
+    RAPIDAPI_HOST_YOUTUBE
+)
 
 logger = logging.getLogger(__name__)
 
 def extract_video_id(url: str) -> str:
-    """استخراج ID ویدیو از لینک یوتیوب"""
     match = re.search(r"(?:v=|youtu\.be/|embed/|shorts/)([a-zA-Z0-9_-]{11})", url)
     return match.group(1) if match else None
 
@@ -14,15 +16,15 @@ def extract_video_id(url: str) -> str:
 def get_youtube_media(url: str):
     video_id = extract_video_id(url)
     if not video_id:
-        logger.error("Could not extract video ID from URL")
+        logger.error("Could not extract YouTube video ID")
         return None
 
     try:
-        endpoint = "https://youtube138.p.rapidapi.com/video/streaming-data/"
+        endpoint = f"https://{RAPIDAPI_HOST_YOUTUBE}/video/streaming-data/"
 
         headers = {
-            "X-RapidAPI-Key": RAPIDAPI_KEY,
-            "X-RapidAPI-Host": "youtube138.p.rapidapi.com",
+            "X-RapidAPI-Key": RAPIDAPI_KEY_YOUTUBE,
+            "X-RapidAPI-Host": RAPIDAPI_HOST_YOUTUBE,
             "Content-Type": "application/json"
         }
 
@@ -34,13 +36,14 @@ def get_youtube_media(url: str):
 
         response = requests.post(endpoint, json=payload, headers=headers, timeout=40)
 
+        logger.info(f"YouTube API Status: {response.status_code}")
+
         if response.status_code != 200:
-            logger.error(f"YouTube API Error {response.status_code}: {response.text[:500]}")
+            logger.error(f"YouTube API Error: {response.text[:500]}")
             return None
 
         data = response.json()
 
-        # استخراج لینک دانلود
         formats = data.get("formats", []) or data.get("streamingData", {}).get("formats", [])
         if not formats:
             formats = data.get("streamingData", {}).get("adaptiveFormats", [])
@@ -59,16 +62,15 @@ def get_youtube_media(url: str):
             download_url = formats[0].get("url")
 
         if download_url:
+            title = data.get("title") or data.get("videoDetails", {}).get("title", "🎥 YouTube Video")
             return {
                 "url": download_url,
-                "caption": data.get("title") or data.get("videoDetails", {}).get("title", "🎥 YouTube Video"),
-                "thumbnail": data.get("thumbnail") or data.get("videoDetails", {}).get("thumbnails", [{}])[0].get("url"),
-                "quality": f"{best_quality}p"
+                "caption": title[:900]
             }
-        
+
         logger.warning("No download URL found")
         return None
 
     except Exception as e:
-        logger.error(f"Exception in get_youtube_media: {e}")
+        logger.error(f"Exception in get_youtube_media: {e}", exc_info=True)
         return None
