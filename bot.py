@@ -24,7 +24,6 @@ from telegram.ext import (
 from config import BOT_TOKEN
 from rapidapi_service import get_instagram_media
 from services.tiktok_service import get_tiktok_media   # ← جدید
-from services.yt_dlp_service import get_tiktok_media_yt_dlp   # ← جایگزین import قبلی
 
 # تنظیم لاگ
 logging.basicConfig(
