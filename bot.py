@@ -24,6 +24,7 @@ from telegram.ext import (
 from config import BOT_TOKEN
 from rapidapi_service import get_instagram_media
 from services.tiktok_service import get_tiktok_media   # ← جدید
+from services.yt_dlp_service import get_tiktok_media_yt_dlp   # ← جایگزین import قبلی
 
 # تنظیم لاگ
 logging.basicConfig(
@@ -138,7 +139,8 @@ async def handle_link(update: Update, context):
             )
 
         else:  # TikTok
-            result = await asyncio.to_thread(get_tiktok_media, url)
+            await processing_msg.edit_text("🔄 در حال دانلود با yt-dlp (بدون واترمارک)...")
+            result = await get_tiktok_media_yt_dlp(url)
             
             if not result or not result.get("url"):
                 await processing_msg.edit_text("❌ نتونستم ویدیو تیک‌تاک رو دانلود کنم.")
