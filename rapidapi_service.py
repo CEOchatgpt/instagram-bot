@@ -40,7 +40,7 @@ def format_caption(raw: str) -> str:
     hashtag_line = " ".join(hashtags)
 
     # کپشن نهایی رو میسازه: پیشوند + متن + هشتگ‌ها (اگه هشتگی بود)
-    caption = "تق ✅\n\n" + text
+    caption = text
     if hashtag_line:
         caption += f"\n\n{hashtag_line}"  # هشتگ‌ها رو با یه خط خالی جدا میکنه
 
