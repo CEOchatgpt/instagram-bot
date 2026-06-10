@@ -81,29 +81,29 @@ async def handle_link(update: Update, context):
     try:
         result = await get_instagram_media(url)
         if not result or not result.get("items"):
-            await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم. پست باید عمومی باشه.")
+            await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم.")
             return
 
         context.user_data["pending_result"] = result
         await processing_msg.delete()
 
         items = result["items"]
-        has_video = any(item["type"] == "video" for item in items)
-        has_photo = any(item["type"] == "photo" for item in items)
+        has_video = any(item.get("type") == "video" for item in items)
         is_single = len(items) == 1
 
-        # ریلز/ویدیو تک → فوراً ارسال
+        # ریلز/ویدیو تک
         if is_single and has_video:
             await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ویدیو پیدا شد، در حال ارسال...")
-            item = items[0]
+
             caption = format_caption(
-                raw=result.get("raw_caption", ""),
+                raw=result.get("raw_caption") or result.get("caption", ""),
                 username=result.get("username"),
                 post_url=result.get("post_url") or url
             )
+
             await context.bot.send_video(
                 chat_id=update.effective_chat.id,
-                video=item["url"],
+                video=items[0]["url"],
                 supports_streaming=True,
                 caption=caption,
                 parse_mode='HTML'
@@ -164,9 +164,9 @@ async def handle_format_choice(update: Update, context):
     try:
         # ساخت کپشن زیبا + Source
         caption = format_caption(
-            raw=result.get("raw_caption", ""),
+            raw=result.get("raw_caption") or result.get("caption", ""),
             username=result.get("username"),
-            post_url=result.get("post_url") or result.get("original_url")
+            post_url=result.get("post_url") or url   # url از پیام کاربر
         )
 
         if len(items) == 1:
