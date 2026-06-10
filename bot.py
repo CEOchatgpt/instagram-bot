@@ -60,6 +60,27 @@ async def start(update: Update, context):
     )
 
 
+# هندلر دستور /help — راهنمای کامل ربات رو نشون میده
+async def help_command(update: Update, context):
+    await update.message.reply_text(
+        "📖 راهنمای ربات\n\n"
+        "🔹 نحوه استفاده:\n"
+        "  لینک هر پست عمومی اینستاگرام رو بفرست\n"
+        "  ربات عکس یا ویدیوش رو برات میفرسته\n\n"
+        "🔹 انواع پست‌های پشتیبانی‌شده:\n"
+        "  • پست تک عکس / تک ویدیو\n"
+        "  • پست کاروسل (چند عکس/ویدیو)\n"
+        "  • ریلز\n\n"
+        "🔹 محدودیت‌ها:\n"
+        f"  • حداکثر {RATE_LIMIT} درخواست در {WINDOW_SECS} ثانیه\n"
+        "  • فقط پست‌های عمومی قابل دانلودن\n\n"
+        "🔹 دستورات:\n"
+        "  /start — شروع ربات\n"
+        "  /help  — نمایش همین راهنما\n\n"
+        "⚡ ساخته‌شده با Python & python-telegram-bot"
+    )
+
+
 # هندلر اصلی — هر بار که کاربر یه متن (غیر از دستور) بفرسته اجرا میشه
 async def handle_link(update: Update, context):
     url = update.message.text.strip()  # متن پیام رو میگیره و فاصله‌های اضافه رو حذف میکنه
@@ -144,6 +165,9 @@ def main():
 
     # هندلر دستور /start رو ثبت میکنه
     app.add_handler(CommandHandler("start", start))
+
+    # هندلر دستور /help رو ثبت میکنه
+    app.add_handler(CommandHandler("help", help_command))
 
     # هندلر پیام‌های متنی (غیر از دستورات) رو ثبت میکنه
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
