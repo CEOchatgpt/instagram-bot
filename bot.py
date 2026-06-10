@@ -132,7 +132,7 @@ async def handle_link(update: Update, context):
                 InlineKeyboardButton("📁 فایل", callback_data="send_file"),
             ]
         ])
-       await update.message.reply_text(
+        await update.message.reply_text(
     "✨ نوع ارسال را انتخاب کن\n\n"
     "📷 عکس معمولی\n"
     "• نمایش مستقیم داخل تلگرام\n\n"
