@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from rapidapi_service import get_instagram_media, format_caption   # format_caption رو هم ایمپورت کن
+from rapidapi_service import get_instagram_media
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,8 +56,7 @@ async def help_command(update: Update, context):
         "📖 <b>راهنمای ربات</b>\n\n"
         "🔹 ریلز → فوراً ویدیو\n"
         "🔹 عکس تک → دو گزینه\n"
-        "🔹 کاروسل → آلبوم یکپارچه یا فایل\n"
-        "🔹 کپشن زیبا + لینک Source\n\n"
+        "🔹 کاروسل → آلبوم یکپارچه (عکس معمولی) یا فایل\n\n"
         "⚡ ساخته شده با Python + python-telegram-bot",
         parse_mode='HTML'
     )
@@ -81,32 +80,26 @@ async def handle_link(update: Update, context):
     try:
         result = await get_instagram_media(url)
         if not result or not result.get("items"):
-            await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم.")
+            await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم. پست باید عمومی باشه.")
             return
 
         context.user_data["pending_result"] = result
         await processing_msg.delete()
 
         items = result["items"]
-        has_video = any(item.get("type") == "video" for item in items)
+        has_video = any(item["type"] == "video" for item in items)
+        has_photo = any(item["type"] == "photo" for item in items)
         is_single = len(items) == 1
 
-        # ریلز/ویدیو تک
+        # ریلز/ویدیو تک → فوراً ارسال
         if is_single and has_video:
             await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ویدیو پیدا شد، در حال ارسال...")
-
-            caption = format_caption(
-                raw=result.get("raw_caption") or result.get("caption", ""),
-                username=result.get("username"),
-                post_url=result.get("post_url") or url
-            )
-
+            item = items[0]
             await context.bot.send_video(
                 chat_id=update.effective_chat.id,
-                video=items[0]["url"],
+                video=item["url"],
                 supports_streaming=True,
-                caption=caption,
-                parse_mode='HTML'
+                caption=result.get("caption", "")
             )
             context.user_data.pop("pending_result", None)
             await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد! لینک بعدی رو بفرست 🚀")
@@ -154,6 +147,7 @@ async def handle_format_choice(update: Update, context):
         await query.edit_message_text("❌ اطلاعات منقضی شد. لینک رو دوباره بفرست.")
         return
 
+    caption = result.get("caption", "")
     items = result["items"]
 
     await query.delete_message()
@@ -162,13 +156,6 @@ async def handle_format_choice(update: Update, context):
     )
 
     try:
-        # ساخت کپشن زیبا + Source
-        caption = format_caption(
-            raw=result.get("raw_caption") or result.get("caption", ""),
-            username=result.get("username"),
-            post_url=result.get("post_url") or url   # url از پیام کاربر
-        )
-
         if len(items) == 1:
             item = items[0]
             if item["type"] == "video":
@@ -176,44 +163,44 @@ async def handle_format_choice(update: Update, context):
                     chat_id=update.effective_chat.id,
                     video=item["url"],
                     supports_streaming=True,
-                    caption=caption,
-                    parse_mode='HTML'
+                    caption=caption
                 )
             elif choice == "send_photo":
                 await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     photo=item["url"],
-                    caption=caption,
-                    parse_mode='HTML'
+                    caption=caption
                 )
             else:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=item["url"],
-                    caption=caption,
-                    parse_mode='HTML'
+                    caption=caption
                 )
         else:
-            # کاروسل
+            # ==================== کاروسل - آلبوم یکپارچه ====================
             if choice == "send_photo":
+                # ارسال به صورت آلبوم (media group) — عکس‌های معمولی
                 media_group = []
                 for i, item in enumerate(items):
                     current_caption = caption if i == 0 else None
-                    media_group.append(InputMediaPhoto(media=item["url"], caption=current_caption, parse_mode='HTML'))
+                    media_group.append(InputMediaPhoto(media=item["url"], caption=current_caption))
 
+                # ارسال در دسته‌های حداکثر ۱۰ تایی
                 for i in range(0, len(media_group), 10):
                     await context.bot.send_media_group(
                         chat_id=update.effective_chat.id,
                         media=media_group[i:i+10]
                     )
             else:
+                # ارسال به صورت فایل (document)
                 media_group = []
                 for i, item in enumerate(items):
                     c = caption if i == 0 else None
                     if item["type"] == "video":
-                        media_group.append(InputMediaVideo(media=item["url"], caption=c, parse_mode='HTML'))
+                        media_group.append(InputMediaVideo(media=item["url"], caption=c))
                     else:
-                        media_group.append(InputMediaDocument(media=item["url"], caption=c, parse_mode='HTML'))
+                        media_group.append(InputMediaDocument(media=item["url"], caption=c))
 
                 for i in range(0, len(media_group), 10):
                     await context.bot.send_media_group(
