@@ -9,6 +9,7 @@ import sys
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "").strip()
 TIKTOK_RAPIDAPI_KEY = os.environ.get("TIKTOK_RAPIDAPI_KEY", "").strip()
+YOUTUBE_RAPIDAPI_KEY = os.environ.get("YOUTUBE_RAPIDAPI_KEY", "").strip()
 
 # ────────────────────────────────────────────────────────────
 # API Hosts
@@ -38,6 +39,8 @@ def validate_config():
     if not RAPIDAPI_KEY:
         errors.append("❌ متغیر RAPIDAPI_KEY تنظیم نشده!")
     
+    if not YOUTUBE_RAPIDAPI_KEY:
+        errors.append("⚠️  متغیر YOUTUBE_RAPIDAPI_KEY تنظیم نشده (YouTube کار نمیکنه!)")
     if not TIKTOK_RAPIDAPI_KEY:
         errors.append("⚠️  متغیر TIKTOK_RAPIDAPI_KEY تنظیم نشده (TikTok کار نمیکنه!)")
     
