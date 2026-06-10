@@ -17,7 +17,7 @@ def get_youtube_media(url: str):
         return None
 
     try:
-        # Endpoint درست این API (video/details)
+        # Endpoint اصلی که در فایل‌هات بود (video/details)
         endpoint = f"https://{RAPIDAPI_HOST_YOUTUBE}/video/details/"
 
         headers = {
@@ -26,44 +26,45 @@ def get_youtube_media(url: str):
             "Content-Type": "application/json"
         }
 
-        payload = {
+        # بعضی endpointها GET، بعضی POST کار می‌کنن. اول GET امتحان می‌کنیم
+        params = {
             "id": video_id,
             "hl": "en",
             "gl": "US"
         }
 
-        response = requests.post(endpoint, json=payload, headers=headers, timeout=40)
+        response = requests.get(endpoint, headers=headers, params=params, timeout=40)
 
         logger.info(f"YouTube API Status: {response.status_code} for {video_id}")
 
         if response.status_code != 200:
-            logger.error(f"YouTube Error: {response.text[:700]}")
+            logger.error(f"YouTube Error: {response.text[:800]}")
             return None
 
         data = response.json()
         logger.info(f"Response keys: {list(data.keys())}")
 
-        # بعضی نسخه‌ها formats دارن، بعضی adaptiveFormats
-        formats = data.get("formats", []) or data.get("streamingData", {}).get("formats", [])
-        if not formats:
-            formats = data.get("streamingData", {}).get("adaptiveFormats", [])
-
+        # جستجو برای لینک دانلود
         download_url = None
-        best_quality = 0
 
-        for fmt in formats:
-            height = fmt.get("height", 0)
-            mime = fmt.get("mimeType", "")
-            if "video/mp4" in mime and height > best_quality and fmt.get("url"):
-                best_quality = height
-                download_url = fmt["url"]
+        # مسیرهای مختلف ممکن
+        if isinstance(data, dict):
+            # مسیر 1: formats مستقیم
+            formats = data.get("formats") or data.get("streamingData", {}).get("formats", [])
+            if not formats:
+                formats = data.get("streamingData", {}).get("adaptiveFormats", [])
 
-        # fallback
-        if not download_url and formats:
             for fmt in formats:
-                if fmt.get("url"):
+                if fmt.get("url") and "video/mp4" in fmt.get("mimeType", ""):
                     download_url = fmt["url"]
                     break
+
+            # fallback
+            if not download_url:
+                for key in ["url", "play", "download_url", "video_url"]:
+                    if data.get(key):
+                        download_url = data.get(key)
+                        break
 
         if download_url:
             title = data.get("title") or data.get("videoDetails", {}).get("title", "🎥 YouTube Video")
@@ -72,7 +73,7 @@ def get_youtube_media(url: str):
                 "caption": title[:900]
             }
         else:
-            logger.warning("No download URL found in response")
+            logger.warning("No download URL found in the response")
             return None
 
     except Exception as e:
