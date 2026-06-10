@@ -25,6 +25,72 @@ from config import BOT_TOKEN
 from rapidapi_service import get_instagram_media
 from services.tiktok_service import get_tiktok_media   # ← جدید
 
+import os
+import telebot
+from config import BOT_TOKEN
+from services.youtube_service import YouTubeDownloader
+from instagrapi import Client
+
+# راه‌اندازی ربات تلگرام (برای دریافت لینک از کاربر)
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# راه‌اندازی دانلودر یوتیوب
+youtube_dl = YouTubeDownloader()
+
+# راه‌اندازی کلاینت اینستاگرام
+ig_client = Client()
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, 
+        "🎬 سلام! من ربات دانلود یوتیوب هستم\n\n"
+        "لینک یوتیوب را بفرست تا برات دانلود کنم.\n"
+        "📌 کیفیت‌های موجود:\n"
+        "/best - بهترین کیفیت\n"
+        "/720 - کیفیت 720p\n"
+        "/1080 - کیفیت 1080p\n"
+        "/audio - فقط صوت (MP3)"
+    )
+
+@bot.message_handler(func=lambda m: youtube_dl.is_youtube_url(m.text))
+def handle_youtube_link(message):
+    url = message.text.strip()
+    
+    # تشخیص کیفیت درخواستی از دستور قبلی (ساده شده)
+    quality = '720'  # پیش‌فرض
+    
+    bot.reply_to(message, "⏳ در حال دانلود ویدیو... لطفاً صبر کنید")
+    
+    # دانلود ویدیو
+    success, msg, file_path = youtube_dl.download_video(url, quality)
+    
+    if success and os.path.exists(file_path):
+        # ارسال به تلگرام (برای تست)
+        with open(file_path, 'rb') as video:
+            bot.send_video(message.chat.id, video, caption=msg)
+        
+        # اگر می‌خواهی به اینستاگرام هم ارسال کنی:
+        # ig_client.login(IG_USERNAME, IG_PASSWORD)
+        # ig_client.video_upload(file_path, caption="دانلود شده از یوتیوب")
+        
+        # پاک کردن فایل موقت
+        os.remove(file_path)
+    else:
+        bot.reply_to(message, msg)
+    
+    # پاکسازی فایل‌های قدیمی (اختیاری)
+    youtube_dl.clean_old_files(hours=2)
+
+@bot.message_handler(commands=['info'])
+def get_video_info(message):
+    # اینجا می‌تونی قبل از دانلود اطلاعات ویدیو رو بگیری
+    pass
+
+if __name__ == "__main__":
+    print("ربات روشن شد...")
+    bot.infinity_polling()
+
+
 # تنظیم لاگ
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
