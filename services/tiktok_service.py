@@ -18,8 +18,13 @@ def get_tiktok_media(url: str):
             "X-RapidAPI-Host": RAPIDAPI_HOST_TIKTOK
         }
 
-        response = requests.get(endpoint, headers=headers, params=querystring, timeout=30)
-        
+        #response = requests.get(endpoint, headers=headers, params=querystring, timeout=30)
+        # ✅ درست
+async def get_tiktok_media(url: str):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(endpoint, headers=headers, params=querystring, timeout=30) as response:
+            # ...
+            
         if response.status_code != 200:
             logger.error(f"TikTok API Error {response.status_code}: {response.text[:400]}")
             return None
