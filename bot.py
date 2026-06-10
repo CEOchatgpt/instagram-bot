@@ -78,17 +78,30 @@ async def help_command(update: Update, context):
 # ارسال ویدیو تیک‌تاک
 # ─────────────────────────────────────────────────────────────
 async def send_tiktok_video(message, media):
-    """ارسال ویدیو تیک‌تاک"""
+    """ارسال ویدیو تیک‌تاک با دانلود به حافظه"""
     try:
-        await message.reply_video(
-            video=media["url"],
-            caption=media.get("caption", "🎵 TikTok Video"),
-            supports_streaming=True
-        )
+        await message.reply_text("📥 در حال دانلود ویدیو برای ارسال...")
+
+        video_file = await download_video_for_telegram(media["url"])
+
+        if video_file:
+            await message.reply_video(
+                video=video_file,
+                caption=media.get("caption", "🎵 TikTok Video"),
+                supports_streaming=True,
+                read_timeout=60,
+                write_timeout=60
+            )
+        else:
+            # fallback به ارسال مستقیم با URL
+            await message.reply_video(
+                video=media["url"],
+                caption=media.get("caption", "🎵 TikTok Video"),
+                supports_streaming=True
+            )
     except Exception as e:
         logger.error(f"Error sending tiktok video: {e}")
-        await message.reply_text("❌ خطا در ارسال ویدیو تیک‌تاک")
-
+        await message.reply_text("❌ خطا در ارسال ویدیو.\nلینک رو دوباره امتحان کن یا بعداً تست کن.")
 
 # هندلر اصلی لینک‌ها
 async def handle_link(update: Update, context):
