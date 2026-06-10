@@ -24,7 +24,6 @@ from telegram.ext import (
 from config import BOT_TOKEN
 from rapidapi_service import get_instagram_media
 from services.tiktok_service import get_tiktok_media   # ← جدید
-from services.yt_dlp_service import get_tiktok_media_yt_dlp   # ← جایگزین import قبلی
 
 # تنظیم لاگ
 logging.basicConfig(
@@ -80,32 +79,16 @@ async def help_command(update: Update, context):
 async def send_tiktok_video(message, media):
     """ارسال ویدیو تیک‌تاک"""
     try:
-        processing = await message.reply_text("📥 در حال دانلود و ارسال ویدیو...")
-
-        video_file = await download_video_for_telegram(media["url"])
-
-        if video_file:
-            await message.reply_video(
-                video=video_file,
-                caption=media.get("caption", "🎵 TikTok Video"),
-                supports_streaming=True,
-                read_timeout=120,
-                write_timeout=120
-            )
-        else:
-            # fallback مستقیم (اگر دانلود نشد)
-            await message.reply_video(
-                video=media["url"],
-                caption=media.get("caption", "🎵 TikTok Video"),
-                supports_streaming=True
-            )
-        
-        await processing.delete()
-        
+        await message.reply_video(
+            video=media["url"],
+            caption=media.get("caption", "🎵 TikTok Video"),
+            supports_streaming=True
+        )
     except Exception as e:
-        logger.error(f"Error sending tiktok video: {e}", exc_info=True)
-        await message.reply_text("❌ خطا در ارسال ویدیو.\nممکنه حجم ویدیو زیاد باشه یا لینک مشکل داشته باشه.\nبعداً دوباره امتحان کن.")
-        
+        logger.error(f"Error sending tiktok video: {e}")
+        await message.reply_text("❌ خطا در ارسال ویدیو تیک‌تاک")
+
+
 # هندلر اصلی لینک‌ها
 async def handle_link(update: Update, context):
     url = update.message.text.strip()
@@ -155,8 +138,7 @@ async def handle_link(update: Update, context):
             )
 
         else:  # TikTok
-            await processing_msg.edit_text("🔄 در حال دانلود با yt-dlp (بدون واترمارک)...")
-            result = await get_tiktok_media_yt_dlp(url)
+            result = await asyncio.to_thread(get_tiktok_media, url)
             
             if not result or not result.get("url"):
                 await processing_msg.edit_text("❌ نتونستم ویدیو تیک‌تاک رو دانلود کنم.")
