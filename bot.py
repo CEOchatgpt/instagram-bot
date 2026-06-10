@@ -135,15 +135,7 @@ async def handle_link(update: Update, context):
         await processing_msg.edit_text("❌ خطایی رخ داد. دوباره امتحان کن.")
 
 
-async def download_media(url: str, filename: str):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            response.raise_for_status()
-            data = await response.read()
-            file_obj = BytesIO(data)
-            file_obj.name = filename
-            return file_obj
-
+# ... imports و بقیه کد بدون تغییر تا handle_format_choice ...
 
 async def handle_format_choice(update: Update, context):
     query = update.callback_query
@@ -160,7 +152,8 @@ async def handle_format_choice(update: Update, context):
 
     await query.delete_message()
     sending_msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id, text="📤 در حال ارسال..."
+        chat_id=update.effective_chat.id, 
+        text="📤 در حال ارسال..."
     )
 
     try:
@@ -174,7 +167,7 @@ async def handle_format_choice(update: Update, context):
                     caption=caption
                 )
             elif choice == "send_photo":
-                # ارسال به صورت عکس معمولی (دقیقاً مثل عکس AFP که فرستادی)
+                # ارسال تک عکس به صورت تصویر معمولی (بهترین حالت)
                 await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     photo=item["url"],
@@ -186,24 +179,42 @@ async def handle_format_choice(update: Update, context):
                     document=item["url"],
                     caption=caption
                 )
-        else:
-            # کاروسل
-            media_group = []
-            for i, item in enumerate(items):
-                c = caption if i == 0 else None
-                if item["type"] == "video":
-                    media_group.append(InputMediaVideo(media=item["url"], caption=c))
-                elif choice == "send_photo":
-                    photo_file = await download_media(item["url"], f"photo_{i}.jpg")
-                    media_group.append(InputMediaPhoto(media=photo_file, caption=c))
-                else:
-                    media_group.append(InputMediaDocument(media=item["url"], caption=c))
 
-            for i in range(0, len(media_group), 10):
-                await context.bot.send_media_group(
-                    chat_id=update.effective_chat.id,
-                    media=media_group[i:i+10]
-                )
+        else:
+            # ==================== اصلاح مهم: ارسال کاروسل به صورت عکس معمولی ====================
+            if choice == "send_photo":
+                # برای کاروسل عکس، به صورت تکی با send_photo بفرست تا حتماً تصویر معمولی بشه
+                for i, item in enumerate(items):
+                    current_caption = caption if i == 0 else ""
+                    try:
+                        await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=item["url"],           # مستقیم از URL (بهتر کار میکنه)
+                            caption=current_caption
+                        )
+                    except Exception as e:
+                        # در صورت خطا، از فایل دانلود شده استفاده کن
+                        photo_file = await download_media(item["url"], f"photo_{i}.jpg")
+                        await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=photo_file,
+                            caption=current_caption
+                        )
+            else:
+                # ارسال به صورت فایل (document)
+                media_group = []
+                for i, item in enumerate(items):
+                    c = caption if i == 0 else None
+                    if item["type"] == "video":
+                        media_group.append(InputMediaVideo(media=item["url"], caption=c))
+                    else:
+                        media_group.append(InputMediaDocument(media=item["url"], caption=c))
+
+                for i in range(0, len(media_group), 10):
+                    await context.bot.send_media_group(
+                        chat_id=update.effective_chat.id,
+                        media=media_group[i:i+10]
+                    )
 
         await sending_msg.delete()
         context.user_data.pop("pending_result", None)
@@ -218,6 +229,16 @@ async def handle_format_choice(update: Update, context):
         await sending_msg.edit_text(f"❌ خطا در ارسال: {str(e)}")
 
 
+# تابع download_media بدون تغییر بمونه
+async def download_media(url: str, filename: str):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            data = await response.read()
+            file_obj = BytesIO(data)
+            file_obj.name = filename
+            return file_obj
+            
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
