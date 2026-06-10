@@ -24,7 +24,7 @@ from telegram.ext import (
 
 from config import BOT_TOKEN, RATE_LIMIT, WINDOW_SECS
 from rapidapi_service import get_instagram_media
-from tiktok_service import get_tiktok_media
+from services.tiktok_service import get_tiktok_media
 from youtube_service import (
     is_youtube_url,
     get_youtube_info,
