@@ -1,32 +1,24 @@
-import os
-import aiohttp
-from io import BytesIO
 import logging
 import time
 import asyncio
 from collections import defaultdict
 
-from telegram import (
-    Update, InputMediaVideo, InputMediaPhoto, InputMediaDocument,
-    InlineKeyboardButton, InlineKeyboardMarkup
-)
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-)
+from telegram import Update, InputMediaVideo, InputMediaPhoto, InputMediaDocument, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-from config import BOT_TOKEN, RATE_LIMIT, WINDOW_SECS
+from config import BOT_TOKEN, RATE_LIMIT, WINDOW_SECS, RAPIDAPI_KEY
 from rapidapi_service import get_instagram_media
 from services.tiktok_service import get_tiktok_media
-from services.youtube_service import get_youtube_media   # ← جدید
+from services.youtube_service import get_youtube_media
 
-# ── لاگ ──────────────────────────────────────────────────────
+# ── Logging ─────────────────────────────────────────────────────
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ── Rate Limiting ─────────────────────────────────────────────
+# ── Rate Limiting ───────────────────────────────────────────────
 user_requests: dict[int, list[float]] = defaultdict(list)
 
 def is_rate_limited(user_id: int) -> tuple[bool, int]:
@@ -39,26 +31,31 @@ def is_rate_limited(user_id: int) -> tuple[bool, int]:
     return False, 0
 
 
-# ── دستورات پایه ─────────────────────────────────────────────
+# ── Start & Help ────────────────────────────────────────────────
 async def start(update: Update, context):
     await update.message.reply_text(
         "🎬 سلام! لینک پست مورد نظرت رو بفرست.\n\n"
-        "✅ پلتفرم‌های پشتیبانی‌شده:\n"
-        "  • Instagram\n  • TikTok\n  • YouTube (ویدیو و Shorts)\n\n"
+        "✅ پشتیبانی از:\n"
+        "• Instagram (پست، ریلز، کاروسل)\n"
+        "• TikTok\n"
+        "• YouTube (ویدیو و Shorts)\n\n"
         f"⚠️ محدودیت: {RATE_LIMIT} درخواست هر {WINDOW_SECS} ثانیه"
     )
 
 
 async def help_command(update: Update, context):
-    await update.message.reply_text("📖 لینک اینستاگرام، تیک‌تاک یا یوتیوب بفرست.")
+    await update.message.reply_text(
+        "📖 فقط لینک اینستاگرام، تیک‌تاک یا یوتیوب بفرست."
+    )
 
 
-# ── هندلر اصلی ───────────────────────────────────────────────
+# ── Handle Link ─────────────────────────────────────────────────
 async def handle_link(update: Update, context):
     url = update.message.text.strip()
     user_id = update.effective_user.id
     url_lower = url.lower()
 
+    # تشخیص پلتفرم
     if "instagram.com" in url_lower:
         platform = "instagram"
     elif "tiktok.com" in url_lower or "vm.tiktok.com" in url_lower:
@@ -69,9 +66,10 @@ async def handle_link(update: Update, context):
         await update.message.reply_text("❌ فقط لینک اینستاگرام، تیک‌تاک و یوتیوب قبول میکنم!")
         return
 
+    # Rate limit
     limited, wait = is_rate_limited(user_id)
     if limited:
-        await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
+        await update.message.reply_text(f"⏳ زیادی سریع! لطفا {wait} ثانیه صبر کن.")
         return
 
     processing_msg = await update.message.reply_text(f"🔄 در حال پردازش {platform.capitalize()}...")
@@ -84,19 +82,20 @@ async def handle_link(update: Update, context):
         elif platform == "youtube":
             await _handle_youtube(update, context, url, processing_msg)
     except Exception as e:
-        logger.error(f"Error in handle_link: {e}", exc_info=True)
+        logger.error(f"Error handling {platform}: {e}", exc_info=True)
         await processing_msg.edit_text("❌ خطایی رخ داد. دوباره امتحان کن.")
 
 
-# ── هندلرهای جداگانه ───────────────────────────────────────
+# ── Instagram Handler ───────────────────────────────────────────
 async def _handle_instagram(update, context, url, processing_msg):
     result = await get_instagram_media(url)
-    if not result:
-        await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم.")
+    if not result or not result.get("items"):
+        await processing_msg.edit_text("❌ نتونستم محتوای اینستاگرام رو پیدا کنم.")
         return
-    # بقیه کد اینستاگرام مثل قبل (انتخاب عکس/فایل)
+
     context.user_data["pending_result"] = result
     await processing_msg.delete()
+
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("📷 عکس معمولی", callback_data="send_photo"),
         InlineKeyboardButton("📁 فایل", callback_data="send_file"),
@@ -104,25 +103,31 @@ async def _handle_instagram(update, context, url, processing_msg):
     await update.message.reply_text("✨ نوع ارسال را انتخاب کن:", reply_markup=keyboard)
 
 
+# ── TikTok Handler ──────────────────────────────────────────────
 async def _handle_tiktok(update, context, url, processing_msg):
-    from services.tiktok_service import get_tiktok_media
     result = await get_tiktok_media(url)
     if not result or not result.get("url"):
-        await processing_msg.edit_text("❌ نتونستم تیک‌تاک رو دانلود کنم.")
+        await processing_msg.edit_text("❌ نتونستم ویدیو تیک‌تاک رو دانلود کنم.")
         return
+
     await processing_msg.delete()
-    await update.message.reply_video(
-        video=result["url"],
-        caption=result.get("caption", "🎵 TikTok"),
-        supports_streaming=True
-    )
+    try:
+        await update.message.reply_video(
+            video=result["url"],
+            caption=result.get("caption", "🎵 TikTok Video"),
+            supports_streaming=True
+        )
+    except Exception as e:
+        logger.error(f"TikTok send error: {e}")
+        await update.message.reply_text("❌ خطا در ارسال تیک‌تاک")
 
 
+# ── YouTube Handler (youtube138) ───────────────────────────────
 async def _handle_youtube(update, context, url, processing_msg):
     result = await asyncio.to_thread(get_youtube_media, url)
     
     if not result or not result.get("url"):
-        await processing_msg.edit_text("❌ نتونستم ویدیو یوتیوب رو دانلود کنم.\n(ممکنه ویدیو محدود باشه)")
+        await processing_msg.edit_text("❌ نتونستم ویدیو یوتیوب رو دانلود کنم.\nممکنه ویدیو محدود یا Private باشه.")
         return
 
     await processing_msg.delete()
@@ -133,20 +138,74 @@ async def _handle_youtube(update, context, url, processing_msg):
             supports_streaming=True
         )
     except Exception as e:
-        logger.error(f"Send YouTube error: {e}")
-        await update.message.reply_text("❌ خطا در ارسال ویدیو (حجم زیاد یا محدودیت تلگرام)")
+        logger.error(f"YouTube send error: {e}")
+        await update.message.reply_text("❌ خطا در ارسال ویدیو یوتیوب (ممکنه حجمش خیلی زیاد باشه)")
 
 
-# ── Callback اینستاگرام ─────────────────────────────────────
+# ── Callback for Instagram Format Choice ───────────────────────
 async def handle_format_choice(update: Update, context):
-    # همان کد قبلی اینستاگرام (کپی شده)
     query = update.callback_query
     await query.answer()
-    # ... (بقیه کد handle_format_choice مثل قبل)
-    # اگر کامل بخوای بگو تا بفرستم
+
+    as_file = (query.data == "send_file")
+    result = context.user_data.get("pending_result")
+
+    if not result:
+        await query.edit_message_text("❌ اطلاعات منقضی شده. لینک رو دوباره بفرست.")
+        return
+
+    caption = result.get("caption", "")
+    items = result.get("items", [])
+    await query.delete_message()
+
+    sending_msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text="📤 در حال ارسال..."
+    )
+
+    try:
+        if len(items) == 1:
+            item = items[0]
+            if item["type"] == "video":
+                await context.bot.send_video(
+                    chat_id=update.effective_chat.id,
+                    video=item["url"],
+                    caption=caption,
+                    supports_streaming=not as_file
+                )
+            elif as_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=item["url"],
+                    caption=caption
+                )
+            else:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=item["url"],
+                    caption=caption
+                )
+        else:
+            # کاروسل
+            media_group = []
+            for i, item in enumerate(items):
+                c = caption if i == 0 else None
+                if item["type"] == "video":
+                    media_group.append(InputMediaVideo(media=item["url"], caption=c))
+                else:
+                    media_group.append(InputMediaPhoto(media=item["url"], caption=c))
+            await context.bot.send_media_group(
+                chat_id=update.effective_chat.id, 
+                media=media_group
+            )
+        
+        await sending_msg.delete()
+    except Exception as e:
+        logger.error(f"Error sending Instagram media: {e}")
+        await sending_msg.edit_text("❌ خطا در ارسال محتوا")
 
 
-# ── Main ─────────────────────────────────────────────────────
+# ── Main ────────────────────────────────────────────────────────
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
