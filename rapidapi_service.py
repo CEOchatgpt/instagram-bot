@@ -3,7 +3,7 @@
 import re       # برای کار با عبارات منظم (پیدا کردن هشتگ‌ها و لینک‌ها)
 import aiohttp  # کتابخونه‌ای برای درخواست‌های HTTP به صورت async (غیر blocking)
 import asyncio  # برای استفاده از asyncio.sleep در فاصله بین retry‌ها
-from config import RAPIDAPI_KEY, RAPIDAPI_HOST_INSTAGRAM  # کلید API و آدرس سرویس رو از فایل تنظیمات میخونه
+from config import RAPIDAPI_KEY_INSTAGRAM as RAPIDAPI_KEY, RAPIDAPI_HOST_INSTAGRAM  # کلید API و آدرس سرویس رو از فایل تنظیمات میخونه
 
 MAX_RETRIES = 3   # حداکثر تعداد دفعاتی که دوباره امتحان میکنه
 RETRY_DELAY = 1   # تاخیر اولیه به ثانیه — هر بار دو برابر میشه (1 → 2 → 4)
