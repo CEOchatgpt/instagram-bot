@@ -240,22 +240,14 @@ async def handle_youtube_quality(update: Update, context):
 
     quality_display = {'1080': '1080p', '720': '720p', '480': '480p',
                        '360': '360p', 'audio': 'MP3'}.get(quality, quality)
-    await query.edit_message_text(f"⏬ در حال دانلود با کیفیت {quality_display}...")
+    await query.edit_message_text(f"⏬ در حال دریافت لینک با کیفیت {quality_display}...")
 
-    success, title_or_err, filepath = await download_youtube_video(url, quality)
+    # لینک مستقیم میگیریم — فایل روی سرور دانلود نمیشه
+    success, title_or_err, direct_url = await download_youtube_video(url, quality)
 
-    if not success:
+    if not success or not direct_url:
         await query.edit_message_text(
-            f"❌ دانلود ناموفق بود.\n\nجزئیات: {title_or_err[:200]}"
-        )
-        return
-
-    # چک سایز (محدودیت ۵۰MB تلگرام)
-    if os.path.getsize(filepath) > 50 * 1024 * 1024:
-        cleanup_file(filepath)
-        await query.edit_message_text(
-            "❌ فایل بزرگتر از ۵۰MB هست.\n"
-            "یه کیفیت پایین‌تر امتحان کن."
+            f"❌ دریافت لینک ناموفق بود.\n\nجزئیات: {title_or_err[:200]}"
         )
         return
 
@@ -269,17 +261,17 @@ async def handle_youtube_quality(update: Update, context):
 
     try:
         await query.delete_message()
-        with open(filepath, 'rb') as f:
-            if quality == 'audio':
-                await context.bot.send_audio(
-                    chat_id=update.effective_chat.id,
-                    audio=f, caption=caption, title=title_or_err,
-                )
-            else:
-                await context.bot.send_video(
-                    chat_id=update.effective_chat.id,
-                    video=f, caption=caption, supports_streaming=True,
-                )
+        # تلگرام مستقیم از URL دانلود میکنه — نیازی به ذخیره روی سرور نیست
+        if quality == 'audio':
+            await context.bot.send_audio(
+                chat_id=update.effective_chat.id,
+                audio=direct_url, caption=caption, title=title_or_err,
+            )
+        else:
+            await context.bot.send_video(
+                chat_id=update.effective_chat.id,
+                video=direct_url, caption=caption, supports_streaming=True,
+            )
         await sending_msg.delete()
         context.user_data.pop("yt_url", None)
         context.user_data.pop("yt_info", None)
@@ -287,8 +279,6 @@ async def handle_youtube_quality(update: Update, context):
     except Exception as e:
         logger.error(f"Error sending YouTube media: {e}")
         await sending_msg.edit_text(f"❌ خطا در ارسال: {str(e)[:200]}")
-    finally:
-        cleanup_file(filepath)
 
 
 # ── اینستاگرام: انتخاب فرمت ──────────────────────────────────
