@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی با حذف منوی اضافی در حالت فایل
+# bot.py - نسخه نهایی با پشتیبانی از حالت فایل برای ویدیوهای تکی
 
 import aiohttp
 from io import BytesIO
@@ -59,14 +59,14 @@ async def show_settings_menu(update: Update, context, query=None):
     user_id = update.effective_user.id
     current_mode = get_user_default_mode(user_id)
     
-    mode_text = "🎬 آلبوم ترکیبی (عکس+ویدیو)" if current_mode == "album" else "📁 فایل"
+    mode_text = "🎬 آلبوم ترکیبی (عکس+ویدیو)" if current_mode == "album" else "📁 فایل (همه چیز به صورت فایل)"
     
     text = (
         "⚙️ <b>تنظیمات ارسال</b>\n\n"
         f"حالت فعلی: {mode_text}\n\n"
         "حالت پیشفرض ارسال رو انتخاب کن:\n"
-        "• آلبوم ترکیبی: عکس و ویدیو در یک آلبوم\n"
-        "• فایل: هر مدیا به صورت فایل جداگانه"
+        "• آلبوم ترکیبی: عکس و ویدیو در یک آلبوم (پخش آنلاین ویدیو)\n"
+        "• فایل: همه چیز به صورت فایل (کیفیت اصلی، حجم بالاتر)"
     )
     
     keyboard = get_user_settings_keyboard(user_id)
@@ -83,7 +83,7 @@ async def help_command(update: Update, context):
     ])
     await update.message.reply_text(
         "📖 <b>راهنمای ربات</b>\n\n"
-        "🔹 ریلز → فوراً ویدیو\n"
+        "🔹 ریلز → بر اساس تنظیمات شما\n"
         "🔹 عکس تک → دو گزینه\n"
         "🔹 کاروسل → بر اساس تنظیمات شما\n\n"
         "💡 می‌تونی از طریق /settings حالت ارسال رو تغییر بدی.\n\n"
@@ -123,22 +123,15 @@ async def send_media_group(chat_id, context, items, caption):
 
 
 async def send_as_files(chat_id, context, items, caption):
-    """ارسال همه مدیاها به صورت فایل جداگانه"""
+    """ارسال همه مدیاها به صورت فایل جداگانه (هم عکس هم ویدیو)"""
     for i, item in enumerate(items):
         current_caption = caption if i == 0 else None
-        if item["type"] == "video":
-            await context.bot.send_video(
-                chat_id=chat_id,
-                video=item["url"],
-                supports_streaming=True,
-                caption=current_caption
-            )
-        else:
-            await context.bot.send_document(
-                chat_id=chat_id,
-                document=item["url"],
-                caption=current_caption
-            )
+        # همه چیز به صورت Document فرستاده میشه
+        await context.bot.send_document(
+            chat_id=chat_id,
+            document=item["url"],
+            caption=current_caption
+        )
 
 
 async def handle_link(update: Update, context):
@@ -169,22 +162,33 @@ async def handle_link(update: Update, context):
         has_video = any(item["type"] == "video" for item in items)
         has_photo = any(item["type"] == "photo" for item in items)
         is_single = len(items) == 1
+        default_mode = get_user_default_mode(user_id)
 
-        # ویدیو تک
+        # ========== ویدیو تک ==========
         if is_single and has_video:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ویدیو پیدا شد، در حال ارسال...")
-            item = items[0]
-            await context.bot.send_video(
-                chat_id=update.effective_chat.id,
-                video=item["url"],
-                supports_streaming=True,
-                caption=result.get("caption", "")
-            )
+            if default_mode == "file":
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ویدیو پیدا شد، در حال ارسال به صورت فایل...")
+                item = items[0]
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=item["url"],
+                    caption=result.get("caption", "")
+                )
+            else:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ویدیو پیدا شد، در حال ارسال...")
+                item = items[0]
+                await context.bot.send_video(
+                    chat_id=update.effective_chat.id,
+                    video=item["url"],
+                    supports_streaming=True,
+                    caption=result.get("caption", "")
+                )
+            
             context.user_data.pop("pending_result", None)
             await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد! لینک بعدی رو بفرست 🚀")
             return
 
-        # عکس تک
+        # ========== عکس تک ==========
         if is_single and has_photo:
             text = "📸 <b>عکس پیدا شد!</b>\n\nچطور برات بفرستم؟"
             keyboard = InlineKeyboardMarkup([
@@ -194,19 +198,14 @@ async def handle_link(update: Update, context):
             await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
             return
 
-        # کاروسل - بررسی حالت پیشفرض کاربر
-        default_mode = get_user_default_mode(user_id)
-        
+        # ========== کاروسل ==========
         if default_mode == "album":
-            # مستقیماً آلبوم ترکیبی بفرست
             await send_media_group(update.effective_chat.id, context, items, result.get("caption", ""))
-            context.user_data.pop("pending_result", None)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
         else:
-            # حالت فایل: مستقیماً به صورت فایل بفرست (بدون منوی اضافی)
             await send_as_files(update.effective_chat.id, context, items, result.get("caption", ""))
-            context.user_data.pop("pending_result", None)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
+        
+        context.user_data.pop("pending_result", None)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
 
     except Exception as e:
         logger.error(f"Error: {e}")
@@ -244,7 +243,7 @@ async def handle_format_choice(update: Update, context):
         ])
         await query.edit_message_text(
             "📖 <b>راهنمای ربات</b>\n\n"
-            "🔹 ریلز → فوراً ویدیو\n"
+            "🔹 ریلز → بر اساس تنظیمات شما\n"
             "🔹 عکس تک → دو گزینه\n"
             "🔹 کاروسل → بر اساس تنظیمات شما\n\n"
             "💡 می‌تونی از طریق /settings حالت ارسال رو تغییر بدی.",
@@ -255,13 +254,13 @@ async def handle_format_choice(update: Update, context):
     
     if choice == "set_mode_album":
         set_user_default_mode(user_id, "album")
-        await query.answer("✅ حالت آلبوم ترکیبی فعال شد!")
+        await query.answer("✅ حالت آلبوم ترکیبی فعال شد! ویدیوها قابل پخش آنلاین هستند.")
         await show_settings_menu(update, context, query)
         return
     
     if choice == "set_mode_file":
         set_user_default_mode(user_id, "file")
-        await query.answer("✅ حالت فایل فعال شد!")
+        await query.answer("✅ حالت فایل فعال شد! همه چیز به صورت فایل ارسال میشود.")
         await show_settings_menu(update, context, query)
         return
     
