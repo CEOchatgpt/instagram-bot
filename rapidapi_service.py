@@ -268,3 +268,7 @@ async def get_instagram_media(post_url: str) -> dict | None:
         else:
             items.append({"type": "photo", "url": best["url"]})
     return {"caption": caption, "items": items} if items else None
+
+
+import logging
+logger = logging.getLogger(__name__)
