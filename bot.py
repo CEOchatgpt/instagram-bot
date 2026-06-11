@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی اصلاح‌شده و پایدار با پشتیبانی کامل از هایلایت
+# bot.py - نسخه جامع و اصلاح‌شده برای رفع مشکل ساخت دکمه‌های هایلایت
 
 import aiohttp
 import asyncio
@@ -97,62 +97,65 @@ async def profile_command(update: Update, context):
 
 
 async def highlights_command(update: Update, context):
-    # ... بخش‌های ابتدایی تابع و گرفتن یوزرنیم ...
-    username = context.args[0] if context.args else None
-    if not username:
-        await update.message.reply_text("❌ لطفاً یوزرنیم را وارد کنید. مثال:\n/highlights leomessi")
+    if not context.args:
+        await update.effective_message.reply_text("⚠️ نحوه استفاده:\n/highlights leomessi")
         return
 
-    processing = await update.message.reply_text("🔍 در حال دریافت لیست هایلایت‌ها...")
-    
+    username = context.args[0].strip("@")
+    processing = await update.effective_message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
+
     try:
-        # دریافت لیست هایلایت‌ها از API
         highlights_data = await get_instagram_highlights(username)
-        if not highlights_data or "meta" not in highlights_data:
-            await processing.edit_text("❌ هایلایتی یافت نشد یا پیج خصوصی است.")
+        
+        # مدیریت انواع ساختارهای خروجی متفاوت API اینستاگرام
+        highlights_list = []
+        if isinstance(highlights_data, list):
+            highlights_list = highlights_data
+        elif isinstance(highlights_data, dict):
+            highlights_list = highlights_data.get("result") or highlights_data.get("items") or []
+            if not highlights_list and any(k in highlights_data for k in ["id", "highlight_id"]):
+                highlights_list = [highlights_data]
+
+        if not highlights_list:
+            await processing.edit_text("❌ هیچ هایلایتی پیدا نشد یا پیج خصوصی (Private) است.")
             return
 
         keyboard = []
-        # بررسی وجود لیست هایلایت‌ها در دیتای برگشتی
-        # معمولاً در اندپوینت‌ها به صورت لیستی از دیکشنری‌ها درون یک کلید یا مستقیماً برمی‌گردد
-        highlights_list = highlights_data.get("items", []) or highlights_data.get("result", [])
-        
-        if not highlights_list:
-            await processing.edit_text("❌ این کاربر هایلایت فعال ندارد.")
-            return
-
-        for hl in highlights_list[:15]: # محدود کردن به ۱۵ هایلایت اول برای شلوغ نشدن کیبورد
-            hl_id = hl.get("id")
-            # برخی APIها ممکن است کلید را به صورت highlight_id یا pk بفرستند
+        for h in highlights_list[:15]:  # محدود به ۱۵ مورد جهت پایداری کیبورد تلگرام
+            if not isinstance(h, dict):
+                continue
+                
+            # استخراج منعطف شناسه اصلی هایلایت
+            hl_id = h.get("id") or h.get("highlight_id") or h.get("pk")
             if not hl_id:
-                hl_id = hl.get("highlight_id") or hl.get("pk")
-                
-            title = hl.get("title", "هایلایت")
+                continue
+
+            title = h.get("title", "هایلایت")
+            count = h.get("count") or h.get("media_count") or 0
+            button_text = f"📚 {title} ({count})" if count else f"📚 {title}"
             
-            if hl_id:
-                # ساخت داده دکمه به شکل hl:id:title 
-                # برای جلوگیری از خطای ۶۴ بایت تلگرام، عنوان را کوتاه می‌کنیم
-                short_title = title[:15]
-                callback_data = f"hl:{hl_id}:{short_title}"
-                
-                # مطمئن می‌شویم طول کل داده از ۶۴ بایت بیشتر نشود
-                if len(callback_data.encode('utf-8')) <= 64:
-                    keyboard.append([InlineKeyboardButton(f"📚 {title}", callback_data=callback_data)])
-                else:
-                    # اگر طولانی بود عنوان را حذف یا کمتر می‌کنیم
-                    keyboard.append([InlineKeyboardButton(f"📚 {title}", callback_data=f"hl:{hl_id}:H")])
+            # برای جلوگیری از خطای ۶۴ بایت CallbackData تلگرام، عنوان را کوتاه می‌کنیم
+            short_title = title[:12]
+            callback_data = f"hl:{hl_id}:{short_title}"
+            
+            # بررسی نهایی طول بایت داده جهت اطمینان از عدم کرش تلگرام
+            if len(callback_data.encode('utf-8')) <= 64:
+                keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+            else:
+                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"hl:{hl_id}:H")])
 
         if not keyboard:
             await processing.edit_text("❌ خطا در پردازش شناسه هایلایت‌ها.")
             return
 
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(f"👇 هایلایت‌های پیج {username} :", reply_markup=reply_markup)
-        await processing.delete()
+        await processing.edit_text(
+            f"📚 هایلایت‌های @{username} ({len(highlights_list)} مورد):",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
     except Exception as e:
         logger.error(f"Error in highlights_command: {e}")
-        await processing.edit_text(f"❌ خطایی رخ داد: {str(e)[:100]}")
+        await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
 async def handle_highlight_callback(update: Update, context):
@@ -160,24 +163,20 @@ async def handle_highlight_callback(update: Update, context):
     await query.answer()
 
     try:
-        # داده دکمه را بر اساس علامت : جدا می‌کنیم
         data_parts = query.data.split(":", 2)
         highlight_id = data_parts[1]
         title = data_parts[2] if len(data_parts) > 2 else "هایلایت"
-        
-        # یک چک کوچک برای دیباگ در ترمینال شما
-        print(f"📌 دکمه فشرده شد -> شناسه واقعی هایلایت: {highlight_id} | عنوان: {title}")
     except Exception as e:
         logger.error(f"Callback split error: {e}")
         await query.edit_message_text("❌ خطای پردازش دکمه.")
         return
-        
-    processing = await query.edit_message_text(f"📥 در حال دانلود «{title}»...\n(ممکن است چند ثانیه زمان ببرد)")
+
+    processing = await query.edit_message_text(f"📥 در حال دانلود «{title}»...")
 
     try:
         result = await get_instagram_highlight_stories(highlight_id, title)
         if not result or not result.get("items"):
-            await processing.edit_text("❌ این هایلایت محتوایی برای نمایش ندارد یا اکانت خصوصی (Private) است.")
+            await processing.edit_text("❌ این هایلایت محتوا ندارد یا قابل دسترسی نیست.")
             return
 
         items = result["items"]
@@ -195,8 +194,9 @@ async def handle_highlight_callback(update: Update, context):
         await processing.delete()
 
     except Exception as e:
-        logger.error(f"Highlight Callback error: {e}")
-        await processing.edit_text(f"❌ خطا در ارسال محتوا: {str(e)[:100]}")
+        logger.error(f"Highlight download error: {e}")
+        await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
+
 
 async def send_media_group(chat_id, context, items, caption):
     """ارسال آلبوم با مدیریت Flood"""
@@ -223,7 +223,7 @@ async def send_media_group(chat_id, context, items, caption):
             )
             await asyncio.sleep(1.5)
         except Exception as e:
-            print(f"⚠️ خطا در ارسال گروه: {e}")
+            logger.error(f"⚠️ خطا در ارسال گروه: {e}")
             await asyncio.sleep(2)
 
 
@@ -238,7 +238,7 @@ async def show_settings_menu(update: Update, context, query=None):
     if query:
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=keyboard)
     else:
-        await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+        await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
 
 
 async def help_command(update: Update, context):
@@ -261,15 +261,15 @@ async def handle_link(update: Update, context):
     user_id = update.effective_user.id
 
     if "instagram.com" not in url:
-        await update.effective_message.reply_text("❌ فقط لینک اینستاگرام قبول میکنم!")
+        await update.message.reply_text("❌ فقط لینک اینستاگرام قبول میکنم!")
         return
 
     limited, wait = is_rate_limited(user_id)
     if limited:
-        await update.effective_message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
+        await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
         return
 
-    processing_msg = await update.effective_message.reply_text("🔄 در حال پردازش...")
+    processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
 
     try:
         result = await get_instagram_media(url)
@@ -310,7 +310,7 @@ async def handle_link(update: Update, context):
         await processing_msg.delete()
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error in handle_link: {e}")
         await processing_msg.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
