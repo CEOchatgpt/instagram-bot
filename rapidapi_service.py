@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه نهایی با پشتیبانی کامل عکس و ویدیو استوری
+# rapidapi_service.py - نسخه نهایی (پست + استوری + پروفایل)
 
 import re
 import aiohttp
@@ -27,8 +27,48 @@ def format_caption(raw: str) -> str:
     return caption
 
 
+async def get_instagram_profile(username: str):
+    """دریافت اطلاعات پروفایل اینستاگرام"""
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://{RAPIDAPI_HOST}/api/instagram/profile"
+            payload = {"username": username}
+
+            async with session.post(url, json=payload, headers=headers, timeout=20) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+
+                print(f"📊 پروفایل @{username} دریافت شد")
+
+                if isinstance(data, dict) and "result" in data:
+                    p = data["result"]
+                    return {
+                        "username": p.get("username"),
+                        "full_name": p.get("full_name", username),
+                        "biography": p.get("biography", "بدون بیو"),
+                        "followers": p.get("follower_count", 0),
+                        "following": p.get("following_count", 0),
+                        "posts": p.get("media_count", 0),
+                        "profile_pic": p.get("profile_pic_url_hd") or p.get("profile_pic_url"),
+                        "is_verified": p.get("is_verified", False),
+                        "is_private": p.get("is_private", False),
+                        "external_url": p.get("external_url"),
+                    }
+                return None
+
+    except Exception as e:
+        print(f"❌ خطا در دریافت پروفایل: {e}")
+        return None
+
+
 async def get_instagram_story(username: str, story_id: str = None):
-    """دریافت استوری با پشتیبانی کامل ویدیو"""
+    """دریافت استوری"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -48,11 +88,7 @@ async def get_instagram_story(username: str, story_id: str = None):
                 resp.raise_for_status()
                 data = await resp.json()
 
-                print(f"\n🔍 پاسخ کامل API استوری برای @{username}:")
-                print(json.dumps(data, indent=2, ensure_ascii=False)[:3000])
-
                 items = []
-
                 stories = data.get("result") if isinstance(data, dict) else None
                 
                 if isinstance(stories, list):
@@ -60,53 +96,21 @@ async def get_instagram_story(username: str, story_id: str = None):
                         if not isinstance(story, dict):
                             continue
 
-                        # === اولویت اول: ویدیو ===
-                        video_found = False
-                        
-                        # مسیرهای مختلف ویدیو
-                        video_versions = (
-                            story.get("video_versions") or 
-                            story.get("video") or
-                            story.get("videos")
-                        )
-                        
-                        if video_versions:
-                            if isinstance(video_versions, list) and video_versions:
-                                # بهترین کیفیت ویدیو
-                                best_video = max(video_versions, key=lambda x: x.get("height", 0) or x.get("width", 0))
-                                video_url = best_video.get("url")
-                            else:
-                                video_url = video_versions.get("url") if isinstance(video_versions, dict) else video_versions
-                            
-                            if video_url:
-                                items.append({"type": "video", "url": video_url})
-                                video_found = True
+                        video_versions = story.get("video_versions") or story.get("video")
+                        if video_versions and isinstance(video_versions, list) and video_versions:
+                            best_video = max(video_versions, key=lambda x: x.get("height", 0) or 0)
+                            items.append({"type": "video", "url": best_video.get("url")})
+                            continue
 
-                        # === اگر ویدیو نبود، عکس ===
-                        if not video_found:
-                            image_versions = story.get("image_versions2", {}).get("candidates", [])
-                            if image_versions:
-                                best_image = max(image_versions, key=lambda x: x.get("height", 0))
-                                items.append({
-                                    "type": "photo",
-                                    "url": best_image.get("url")
-                                })
+                        image_versions = story.get("image_versions2", {}).get("candidates", [])
+                        if image_versions:
+                            best_image = max(image_versions, key=lambda x: x.get("height", 0))
+                            items.append({"type": "photo", "url": best_image.get("url")})
 
-                if items:
-                    video_count = sum(1 for i in items if i["type"] == "video")
-                    photo_count = len(items) - video_count
-                    print(f"✅ استخراج شد: {video_count} ویدیو + {photo_count} عکس")
-                    return {
-                        "caption": f"📖 استوری @{username}",
-                        "items": items
-                    }
-                else:
-                    print("⚠️ هیچ آیتمی پیدا نشد")
-                    return {
-                        "caption": f"📖 استوری @{username}",
-                        "items": [],
-                        "raw": data
-                    }
+                return {
+                    "caption": f"📖 استوری @{username}",
+                    "items": items
+                } if items else {"caption": f"📖 استوری @{username}", "items": []}
 
     except Exception as e:
         print(f"❌ خطا در دریافت استوری: {e}")
@@ -123,10 +127,10 @@ async def get_instagram_media(post_url: str) -> dict | None:
     if story_match:
         username = story_match.group(1)
         story_id = story_match.group(2)
-        print(f"📖 لینک استوری تشخیص داده شد → @{username} (ID: {story_id})")
+        print(f"📖 لینک استوری تشخیص داده شد → @{username}")
         return await get_instagram_story(username, story_id)
 
-    # بخش پست/ریلز (بدون تغییر)
+    # پست / ریلز / کاروسل
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -138,9 +142,7 @@ async def get_instagram_media(post_url: str) -> dict | None:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    api_url, json={"url": post_url}, headers=headers, timeout=15
-                ) as response:
+                async with session.post(api_url, json={"url": post_url}, headers=headers, timeout=15) as response:
                     response.raise_for_status()
                     data = await response.json()
             break
