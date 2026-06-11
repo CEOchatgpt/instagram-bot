@@ -296,6 +296,11 @@ async def handle_callback(update: Update, context):
     
     data = query.data
     user_id = update.effective_user.id
+
+    # هندل کردن دکمه‌های ریل
+    if data.startswith("reel_"):
+        await handle_reel_callbacks(update, context)
+        return
     
     if data == "new_download":
         await query.edit_message_text("لطفاً لینک اینستاگرام خود را ارسال کنید:")
@@ -332,6 +337,208 @@ async def handle_callback(update: Update, context):
     elif data.startswith("hl_"):
         await handle_highlight_callback(update, context)
 
+# به bot.py اضافه کنید
+
+async def reels_command(update: Update, context):
+    """
+    دستور /reels username - نمایش لیست ریل‌های یک کاربر
+    """
+    if not context.args:
+        await update.effective_message.reply_text(
+            "⚠️ نحوه استفاده:\n"
+            "/reels username\n\n"
+            "مثال: /reels cristiano"
+        )
+        return
+    
+    username = context.args[0].strip("@")
+    user_id = update.effective_user.id
+    
+    # بررسی rate limit
+    limited, wait = is_rate_limited(user_id)
+    if limited:
+        await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
+        return
+    
+    processing_msg = await update.effective_message.reply_text(
+        f"🎬 در حال دریافت ریل‌های @{username}...\n"
+        f"این کار چند ثانیه طول میکشه."
+    )
+    
+    try:
+        result = await get_user_reels(username)
+        
+        if not result or not result.get("items"):
+            await processing_msg.edit_text(
+                f"❌ هیچ ریلی برای @{username} پیدا نشد.\n\n"
+                "احتمالا پیج خصوصی است یا ریل‌ای وجود ندارد."
+            )
+            return
+        
+        items = result["items"]
+        next_max_id = result.get("next_max_id", "")
+        
+        # ذخیره در user_data برای صفحه‌بندی
+        context.user_data['reels_data'] = {
+            "username": username,
+            "items": items,
+            "next_max_id": next_max_id,
+            "current_page": 0,
+            "total": len(items)
+        }
+        
+        # نمایش اولین ریل
+        await show_reel_item(update, context, processing_msg, 0)
+        
+    except Exception as e:
+        logger.error(f"Error in reels_command: {e}")
+        await processing_msg.edit_text(f"❌ خطا: {str(e)[:100]}")
+
+
+async def show_reel_item(update: Update, context, message, index: int):
+    """
+    نمایش یک ریل خاص با دکمه‌های قبلی/بعدی
+    """
+    reels_data = context.user_data.get('reels_data')
+    if not reels_data or index >= len(reels_data["items"]):
+        return
+    
+    item = reels_data["items"][index]
+    username = reels_data["username"]
+    total = reels_data["total"]
+    
+    # ساخت کپشن
+    caption = (
+        f"🎬 <b>ریل از @{username}</b>\n\n"
+        f"📝 {item['caption']}\n\n"
+        f"❤️ {item['like_count']:,} لایک | 💬 {item['comment_count']:,} کامنت"
+    )
+    
+    # دکمه‌های ناوبری
+    keyboard = []
+    nav_buttons = []
+    
+    if index > 0:
+        nav_buttons.append(InlineKeyboardButton("◀️ قبلی", callback_data=f"reel_prev_{index}"))
+    
+    nav_buttons.append(InlineKeyboardButton(f"{index+1}/{total}", callback_data="reel_info"))
+    
+    if index < total - 1:
+        nav_buttons.append(InlineKeyboardButton("بعدی ▶️", callback_data=f"reel_next_{index}"))
+    
+    keyboard.append(nav_buttons)
+    
+    # دکمه دانلود و بستن
+    keyboard.append([
+        InlineKeyboardButton("📥 دانلود این ریل", callback_data=f"reel_download_{index}"),
+        InlineKeyboardButton("❌ بستن", callback_data="reel_close")
+    ])
+    
+    markup = InlineKeyboardMarkup(keyboard)
+    
+    # ارسال ویدیو
+    try:
+        await message.edit_text("📤 در حال ارسال ریل...")
+        
+        await context.bot.send_video(
+            chat_id=update.effective_chat.id,
+            video=item["url"],
+            caption=caption,
+            supports_streaming=True,
+            parse_mode='HTML',
+            reply_markup=markup,
+            timeout=60
+        )
+        
+        await message.delete()  # پاک کردن پیام "در حال پردازش"
+        
+    except Exception as e:
+        logger.error(f"Error sending reel: {e}")
+        # اگه ویدیو مستقیم فرستاده نشد، به صورت داکیومنت بفرست
+        try:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=item["url"],
+                caption=caption,
+                parse_mode='HTML',
+                reply_markup=markup
+            )
+            await message.delete()
+        except Exception as e2:
+            await message.edit_text(f"❌ خطا در ارسال ریل: {str(e2)[:100]}")
+
+
+async def handle_reel_callbacks(update: Update, context):
+    """
+    هندل کردن دکمه‌های ریل (قبلی، بعدی، دانلود، بستن)
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    reels_data = context.user_data.get('reels_data')
+    
+    if not reels_data:
+        await query.edit_message_text("❌ اطلاعات ریل منقضی شده. دوباره /reels رو امتحان کن.")
+        return
+    
+    if data == "reel_close":
+        # حذف پیام و پاک کردن دیتا
+        await query.message.delete()
+        context.user_data.pop('reels_data', None)
+        return
+    
+    if data == "reel_info":
+        # فقط اطلاعات نمایش داده بشه
+        await query.answer(f"ریل {reels_data['current_page']+1} از {reels_data['total']}")
+        return
+    
+    # پردازش قبلی/بعدی
+    if data.startswith("reel_prev_"):
+        current_index = int(data.split("_")[2])
+        new_index = current_index - 1
+        reels_data["current_page"] = new_index
+        context.user_data['reels_data'] = reels_data
+        
+        # حذف پیام قبلی و نمایش جدید
+        await query.message.delete()
+        # ایجاد پیام جدید برای نمایش
+        fake_update = update
+        fake_update.effective_message = query.message
+        fake_msg = await fake_update.effective_chat.send_message("🔄 در حال بارگذاری...")
+        await show_reel_item(update, context, fake_msg, new_index)
+        return
+    
+    if data.startswith("reel_next_"):
+        current_index = int(data.split("_")[2])
+        new_index = current_index + 1
+        reels_data["current_page"] = new_index
+        context.user_data['reels_data'] = reels_data
+        
+        await query.message.delete()
+        fake_update = update
+        fake_update.effective_message = query.message
+        fake_msg = await fake_update.effective_chat.send_message("🔄 در حال بارگذاری...")
+        await show_reel_item(update, context, fake_msg, new_index)
+        return
+    
+    # دانلود ریل
+    if data.startswith("reel_download_"):
+        index = int(data.split("_")[2])
+        item = reels_data["items"][index]
+        
+        await query.message.reply_text("📥 در حال ارسال فایل...")
+        try:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=item["url"],
+                filename=f"reel_{reels_data['username']}_{item['id']}.mp4",
+                caption=f"🎬 ریل از @{reels_data['username']}\n{item['caption'][:100]}"
+            )
+        except Exception as e:
+            await query.message.reply_text(f"❌ خطا در دانلود: {str(e)[:100]}")
+
+
 
 def main():
     app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
@@ -341,6 +548,8 @@ def main():
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("highlights", highlights_command))
+    app.add_handler(CommandHandler("reels", reels_command))  # <-- جدید
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
     app.add_handler(CallbackQueryHandler(handle_callback))
     
