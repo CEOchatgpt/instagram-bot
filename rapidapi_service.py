@@ -462,9 +462,7 @@ async def get_user_reels_v2(username: str):
 
 
 async def get_user_reels_direct(username: str):
-    """
-    نسخه سوم - دریافت مستقیم با استفاده از endpoint profile
-    """
+    """نسخه سوم - دریافت مستقیم با استفاده از endpoint profile"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -485,7 +483,6 @@ async def get_user_reels_direct(username: str):
                 items = []
                 
                 if isinstance(result, dict):
-                    # بررسی اگر recent_reels وجود داشته باشد
                     recent_reels = result.get("recent_reels", [])
                     if recent_reels:
                         for reel in recent_reels:
@@ -508,6 +505,10 @@ async def get_user_reels_direct(username: str):
                     "username": username
                 } if items else None
                 
+    except Exception as e:
+        logger.error(f"Error in get_user_reels_direct: {e}")
+        return None
+        
     except Exception as e:
         logger.error(f"Error in get_user_reels_direct: {e}")
         return None
