@@ -3,7 +3,7 @@
 import re       # برای کار با عبارات منظم (پیدا کردن هشتگ‌ها و لینک‌ها)
 import aiohttp  # کتابخونه‌ای برای درخواست‌های HTTP به صورت async (غیر blocking)
 import asyncio  # برای استفاده از asyncio.sleep در فاصله بین retry‌ها
-from config import RAPIDAPI_KEY, RAPIDAPI_HOST  # کلید API و آدرس سرویس رو از فایل تنظیمات میخونه
+from config import INSTAGRAM_RAPIDAPI_KEY, RAPIDAPI_HOST_INSTAGRAM  # کلید API و آدرس سرویس رو از فایل تنظیمات میخونه
 
 MAX_RETRIES = 3   # حداکثر تعداد دفعاتی که دوباره امتحان میکنه
 RETRY_DELAY = 1   # تاخیر اولیه به ثانیه — هر بار دو برابر میشه (1 → 2 → 4)
@@ -60,12 +60,12 @@ async def get_instagram_media(post_url: str) -> dict | None:
     """
 
     # آدرس کامل endpoint ای که باید بهش درخواست بزنیم رو میسازه
-    api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
+    api_url = f"https://{RAPIDAPI_HOST_INSTAGRAM}/api/instagram/links"
 
     # هدرهایی که باید با هر درخواست بفرستیم تا RapidAPI بفهمه کی هستیم
     headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,       # کلید احراز هویت ما
-        "X-RapidAPI-Host": RAPIDAPI_HOST,      # آدرس هاست API
+        "X-RapidAPI-Key": INSTAGRAM_RAPIDAPI_KEY,       # کلید احراز هویت ما
+        "X-RapidAPI-Host": RAPIDAPI_HOST_INSTAGRAM,      # آدرس هاست API
         "Content-Type": "application/json",    # میگه که body درخواست JSON‌ه
     }
 
