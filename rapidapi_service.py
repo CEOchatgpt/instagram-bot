@@ -77,45 +77,56 @@ async def get_instagram_highlights(username: str):
 
 
 async def get_instagram_highlight_stories(highlight_id: str, title: str = "هایلایت"):
-    """دریافت استوری‌های داخل یک هایلایت"""
+    """دریافت استوری‌های هایلایت با استفاده از متد پایدار و مستقیم لینک"""
+    # ساخت لینک مستقیم و استاندارد هایلایت
+    highlight_url = f"https://www.instagram.com/stories/highlights/{highlight_id}/"
+    try:
+        print(f"🔄 تلاش برای دریافت هایلایت از طریق لینک مستقیم: {highlight_url}")
+        # استفاده از همان تابعی که لینک‌های مستقیم را با موفقیت دانلود می‌کند
+        result = await get_instagram_media(highlight_url)
+        if result and result.get("items"):
+            # جایگزین کردن کپشن با عنوان اصلی هایلایت
+            result["caption"] = f"📚 {title}"
+            return result
+    except Exception as e:
+        print(f"❌ خطا در متد مستقیم هایلایت: {e}")
+    
+    # روش زاپاس (Fallback) در صورت ناموفق بودن روش اول
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST, "Content-Type": "application/json"}
     try:
-        async with aiohttp.ClientSession() as session:  # حل مشکل نامشخص بودن session
+        async with aiohttp.ClientSession() as session:
             url = f"https://{RAPIDAPI_HOST}/api/instagram/highlightStories"
             payload = {"highlightId": str(highlight_id), "highlight_id": str(highlight_id)}
             async with session.post(url, json=payload, headers=headers, timeout=25) as resp:
                 data = await resp.json()
                 items = []
+                result_data = data.get("result") or data.get("items") or data
                 
-                # مدیریت انواع ساختارهای خروجی RapidAPI
-                result = data.get("result") or data.get("items") or data
-                
-                if isinstance(result, dict) and "items" in result:
-                    stories = result["items"]
-                elif isinstance(result, list):
-                    stories = result
+                if isinstance(result_data, dict) and "items" in result_data:
+                    stories = result_data["items"]
+                elif isinstance(result_data, list):
+                    stories = result_data
                 else:
-                    stories = [result] if isinstance(result, dict) else []
+                    stories = [result_data] if isinstance(result_data, dict) else []
 
                 for story in stories:
                     if not isinstance(story, dict): continue
                     
-                    # بررسی ویدیوها
-                    video_versions = story.get("video_versions") or story.get("video")
-                    if video_versions and isinstance(video_versions, list):
-                        best = max(video_versions, key=lambda x: x.get("height", 0) or 0)
-                        items.append({"type": "video", "url": best.get("url")})
-                        continue
-                        
-                    # بررسی عکس‌ها
-                    candidates = story.get("image_versions2", {}).get("candidates", []) or story.get("images", [])
-                    if candidates and isinstance(candidates, list):
-                        best = max(candidates, key=lambda x: x.get("height", 0) or 0)
-                        items.append({"type": "photo", "url": best.get("url")})
+                    # بررسی ویدیو
+                    video = story.get("video_versions") or story.get("video") or story.get("video_url")
+                    if video:
+                        url_val = video[0].get("url") if isinstance(video, list) else (video if isinstance(video, str) else story.get("video_url"))
+                        if url_val: items.append({"type": "video", "url": url_val}); continue
+                    
+                    # بررسی عکس
+                    images = story.get("image_versions2", {}).get("candidates", []) or story.get("images", []) or story.get("display_url")
+                    if images:
+                        url_val = images[0].get("url") if isinstance(images, list) else (images if isinstance(images, str) else story.get("display_url"))
+                        if url_val: items.append({"type": "photo", "url": url_val})
                 
-                return {"caption": f"📚 {title}", "items": items}
+                return {"caption": f"📚 {title}", "items": items} if items else None
     except Exception as e:
-        print(f"❌ خطا در دریافت استوری هایلایت: {e}")
+        print(f"❌ خطا در روش زاپاس هایلایت: {e}")
         return None
 
 
