@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی با تست مستقیم
+# bot.py - نسخه نهایی با پشتیبانی از تنظیمات برای عکس تکی
 
 import aiohttp
 from io import BytesIO
@@ -82,7 +82,7 @@ async def help_command(update: Update, context):
     await update.message.reply_text(
         "📖 <b>راهنمای ربات</b>\n\n"
         "🔹 ریلز → بر اساس تنظیمات شما\n"
-        "🔹 عکس تک → انتخاب دستی\n"
+        "🔹 عکس تک → بر اساس تنظیمات شما\n"
         "🔹 کاروسل → بر اساس تنظیمات شما\n\n"
         "💡 از /settings برای تغییر حالت استفاده کن.",
         parse_mode='HTML',
@@ -159,10 +159,9 @@ async def handle_link(update: Update, context):
         is_single = len(items) == 1
         default_mode = get_user_default_mode(user_id)
         
-        # برای دیباگ - توی لاگ نشون بده حالت فعلی چیه
         print(f"🔍 کاربر {user_id} - حالت فعلی: {default_mode} - تعداد آیتم: {len(items)}")
 
-        # ========== ویدیو تک (ریلز) ==========
+        # ========== ویدیو تک ==========
         if is_single and has_video:
             if default_mode == "file":
                 print("📁 ارسال ویدیو به صورت فایل (Document)")
@@ -188,12 +187,24 @@ async def handle_link(update: Update, context):
 
         # ========== عکس تک ==========
         if is_single and has_photo:
-            text = "📸 <b>عکس پیدا شد!</b>\n\nچطور بفرستم؟"
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🖼 عکس معمولی", callback_data="send_photo")],
-                [InlineKeyboardButton("📁 فایل", callback_data="send_file")]
-            ])
-            await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+            if default_mode == "file":
+                print("📁 ارسال عکس به صورت فایل (Document)")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="📸 ارسال عکس به صورت فایل...")
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=items[0]["url"],
+                    caption=result.get("caption", "")
+                )
+                context.user_data.pop("pending_result", None)
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
+            else:
+                print("🖼 نمایش منوی انتخاب برای عکس")
+                text = "📸 <b>عکس پیدا شد!</b>\n\nچطور بفرستم؟"
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🖼 عکس معمولی", callback_data="send_photo")],
+                    [InlineKeyboardButton("📁 فایل", callback_data="send_file")]
+                ])
+                await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
             return
 
         # ========== کاروسل ==========
@@ -273,7 +284,7 @@ async def handle_format_choice(update: Update, context):
         await show_settings_menu(update, context, query)
         return
     
-    # ارسال عکس تکی
+    # ارسال عکس تکی (منوی انتخاب)
     result = context.user_data.get("pending_result")
     if not result:
         await query.edit_message_text("❌ اطلاعات منقضی شد. لینک رو دوباره بفرست.")
