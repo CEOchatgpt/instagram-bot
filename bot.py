@@ -159,18 +159,25 @@ async def handle_link(update: Update, context):
         is_single = len(items) == 1
         default_mode = get_user_default_mode(user_id)
         
-        print(f"🔍 کاربر {user_id} - حالت فعلی: {default_mode} - تعداد آیتم: {len(items)}")
+        print(f"🔍 کاربر {user_id} - حالت: {default_mode} - تعداد: {len(items)} - ویدیو: {has_video} - عکس: {has_photo}")
 
         # ========== ویدیو تک ==========
         if is_single and has_video:
+            print(f"🎥 ویدیو تکی شناسایی شد - حالت: {default_mode}")
             if default_mode == "file":
                 print("📁 ارسال ویدیو به صورت فایل (Document)")
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ارسال ویدیو به صورت فایل...")
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id,
-                    document=items[0]["url"],
-                    caption=result.get("caption", "")
-                )
+                try:
+                    await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ارسال ویدیو به صورت فایل...")
+                    await context.bot.send_document(
+                        chat_id=update.effective_chat.id,
+                        document=items[0]["url"],
+                        caption=result.get("caption", "")
+                    )
+                    print("✅ ویدیو بصورت فایل ارسال شد")
+                except Exception as e:
+                    print(f"⚠️ خطا در ارسال فایل: {e}")
+                    logger.error(f"Error sending video as document: {e}")
+                    raise
             else:
                 print("🎬 ارسال ویدیو به صورت قابل پخش (Video)")
                 await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 در حال ارسال ویدیو...")
@@ -187,6 +194,7 @@ async def handle_link(update: Update, context):
 
         # ========== عکس تک ==========
         if is_single and has_photo:
+            print(f"📸 عکس تکی شناسایی شد - حالت: {default_mode}")
             if default_mode == "file":
                 print("📁 ارسال عکس به صورت فایل (Document)")
                 await context.bot.send_message(chat_id=update.effective_chat.id, text="📸 ارسال عکس به صورت فایل...")
@@ -195,16 +203,17 @@ async def handle_link(update: Update, context):
                     document=items[0]["url"],
                     caption=result.get("caption", "")
                 )
-                context.user_data.pop("pending_result", None)
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
             else:
-                print("🖼 نمایش منوی انتخاب برای عکس")
-                text = "📸 <b>عکس پیدا شد!</b>\n\nچطور بفرستم؟"
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🖼 عکس معمولی", callback_data="send_photo")],
-                    [InlineKeyboardButton("📁 فایل", callback_data="send_file")]
-                ])
-                await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+                print("🖼 ارسال عکس به صورت معمولی (Photo) - بدون منوی انتخاب")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="📸 ارسال عکس...")
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=items[0]["url"],
+                    caption=result.get("caption", "")
+                )
+            
+            context.user_data.pop("pending_result", None)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
             return
 
         # ========== کاروسل ==========
@@ -283,43 +292,6 @@ async def handle_format_choice(update: Update, context):
         await query.answer("✅ حالت فایل فعال شد!")
         await show_settings_menu(update, context, query)
         return
-    
-    # ارسال عکس تکی (منوی انتخاب)
-    result = context.user_data.get("pending_result")
-    if not result:
-        await query.edit_message_text("❌ اطلاعات منقضی شد. لینک رو دوباره بفرست.")
-        return
-
-    caption = result.get("caption", "")
-    items = result["items"]
-
-    await query.delete_message()
-    sending_msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id, text="📤 در حال ارسال..."
-    )
-
-    try:
-        if len(items) == 1:
-            item = items[0]
-            if choice == "send_photo":
-                await context.bot.send_photo(
-                    chat_id=update.effective_chat.id,
-                    photo=item["url"],
-                    caption=caption
-                )
-            else:  # send_file
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id,
-                    document=item["url"],
-                    caption=caption
-                )
-
-        await sending_msg.delete()
-        context.user_data.pop("pending_result", None)
-
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        await sending_msg.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
 def main():
