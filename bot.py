@@ -1,6 +1,7 @@
-# bot.py - نسخه نهایی با پشتیبانی کامل از هایلایت
+# bot.py - نسخه نهایی و اصلاح‌شده با پشتیبانی کامل هایلایت
 
 import aiohttp
+import asyncio  # ← این خط اضافه شد
 import logging
 import time
 from collections import defaultdict
@@ -62,7 +63,6 @@ async def profile_command(update: Update, context):
     if not context.args:
         await update.message.reply_text("⚠️ نحوه استفاده:\n/profile cristiano")
         return
-
     username = context.args[0].strip("@")
     processing = await update.message.reply_text(f"📊 در حال دریافت پروفایل @{username}...")
 
@@ -73,12 +73,12 @@ async def profile_command(update: Update, context):
             return
 
         caption = (
-            f"👤 <b>{profile['full_name']}</b>\n"
-            f"🔖 @{profile['username']}\n\n"
-            f"📝 {profile['biography'][:280]}{'...' if len(profile['biography']) > 280 else ''}\n\n"
-            f"❤️ {profile['followers']:,} دنبال‌کننده\n"
-            f"👥 {profile['following']:,} دنبال‌شونده\n"
-            f"📸 {profile['posts']:,} پست\n"
+            f"👤 <b>{profile.get('full_name', username)}</b>\n"
+            f"🔖 @{profile.get('username', username)}\n\n"
+            f"📝 {profile.get('biography', 'بدون بیو')[:280]}\n\n"
+            f"❤️ {profile.get('followers', 0):,} دنبال‌کننده\n"
+            f"👥 {profile.get('following', 0):,} دنبال‌شونده\n"
+            f"📸 {profile.get('posts', 0):,} پست\n"
         )
 
         if profile.get("profile_pic"):
@@ -107,14 +107,14 @@ async def highlights_command(update: Update, context):
     try:
         highlights = await get_instagram_highlights(username)
         if not highlights:
-            await processing.edit_text("❌ هیچ هایلایتی پیدا نشد (اکانت ممکنه خصوصی باشه).")
+            await processing.edit_text("❌ هیچ هایلایتی پیدا نشد.")
             return
 
         keyboard = []
-        for h in highlights[:12]:  # حداکثر ۱۲ تا برای جلوگیری از شلوغی
+        for h in highlights[:15]:
             keyboard.append([InlineKeyboardButton(
-                f"📚 {h['title']} ({h.get('count', '?')})",
-                callback_data=f"hl:{h['highlight_id']}:{h['title']}"
+                f"📚 {h.get('title', 'هایلایت')} ({h.get('count', 0)})",
+                callback_data=f"hl:{h.get('highlight_id')}:{h.get('title', 'هایلایت')}"
             )])
 
         await processing.edit_text(
@@ -133,6 +133,7 @@ async def handle_highlight_callback(update: Update, context):
     try:
         _, highlight_id, title = query.data.split(":", 2)
     except:
+        await query.edit_message_text("❌ خطای پردازش.")
         return
 
     processing = await query.edit_message_text(f"📥 در حال دانلود «{title}»...")
@@ -140,7 +141,7 @@ async def handle_highlight_callback(update: Update, context):
     try:
         result = await get_instagram_highlight_stories(highlight_id, title)
         if not result or not result.get("items"):
-            await processing.edit_text("❌ این هایلایت محتوا ندارد.")
+            await processing.edit_text("❌ این هایلایت محتوا ندارد یا قابل دسترسی نیست.")
             return
 
         items = result["items"]
@@ -158,6 +159,7 @@ async def handle_highlight_callback(update: Update, context):
         await processing.delete()
 
     except Exception as e:
+        logger.error(f"Highlight error: {e}")
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
@@ -190,20 +192,14 @@ async def send_media_group(chat_id, context, items, caption):
             await asyncio.sleep(2)
 
 
-# ==================== توابع قبلی ====================
+# ==================== بقیه توابع قبلی ====================
 
 async def show_settings_menu(update: Update, context, query=None):
     user_id = update.effective_user.id
     current_mode = get_user_default_mode(user_id)
     mode_text = "🎬 آلبوم ترکیبی" if current_mode == "album" else "📁 فایل"
     
-    text = (
-        "⚙️ <b>تنظیمات ارسال</b>\n\n"
-        f"حالت فعلی: {mode_text}\n\n"
-        "• آلبوم ترکیبی: عکس و ویدیو در یک آلبوم\n"
-        "• فایل: همه چیز به صورت فایل"
-    )
-    
+    text = f"⚙️ <b>تنظیمات ارسال</b>\n\nحالت فعلی: {mode_text}"
     keyboard = get_user_settings_keyboard(user_id)
     
     if query:
@@ -216,9 +212,9 @@ async def help_command(update: Update, context):
     await update.message.reply_text(
         "📖 <b>راهنما</b>\n\n"
         "• لینک پست/ریلز/استوری بفرست\n"
-        "• /profile username → اطلاعات پروفایل\n"
-        "• /highlights username → دانلود هایلایت\n"
-        "• /settings → تغییر حالت ارسال",
+        "• /profile username → پروفایل\n"
+        "• /highlights username → لیست هایلایت‌ها\n"
+        "• /settings → تنظیمات",
         parse_mode='HTML'
     )
 
@@ -228,7 +224,6 @@ async def settings_command(update: Update, context):
 
 
 async def handle_link(update: Update, context):
-    # کد قبلی handle_link (کامل)
     url = update.message.text.strip()
     user_id = update.effective_user.id
 
@@ -241,23 +236,16 @@ async def handle_link(update: Update, context):
         await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
         return
 
-    if "/stories/" in url:
-        processing_msg = await update.message.reply_text("📖 در حال دریافت استوری...")
-    else:
-        processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
+    processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
 
     try:
         result = await get_instagram_media(url)
-        if not result or (not result.get("items") and not result.get("raw")):
+        if not result or not result.get("items"):
             await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم.")
             return
 
         items = result.get("items", [])
         caption = result.get("caption", "دانلود از اینستاگرام")
-
-        if not items and result.get("raw"):
-            await update.message.reply_text("⚠️ استوری دریافت شد اما ساختار جدیده.")
-            return
 
         has_video = any(item["type"] == "video" for item in items)
         has_photo = any(item["type"] == "photo" for item in items)
@@ -278,9 +266,12 @@ async def handle_link(update: Update, context):
             if default_mode == "album":
                 await send_media_group(update.effective_chat.id, context, items, caption)
             else:
-                # ارسال به صورت فایل (send_as_files)
                 for item in items:
-                    await context.bot.send_document(chat_id=update.effective_chat.id, document=item["url"], caption=caption if items.index(item) == 0 else None)
+                    await context.bot.send_document(
+                        chat_id=update.effective_chat.id, 
+                        document=item["url"], 
+                        caption=caption if items.index(item) == 0 else None
+                    )
 
         await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
         await processing_msg.delete()
@@ -298,13 +289,11 @@ async def handle_format_choice(update: Update, context):
 
     if choice == "show_settings":
         await show_settings_menu(update, context, query)
-    elif choice == "back_to_main":
-        # ... (کد قبلی)
-        pass
-    # بقیه دکمه‌های تنظیمات...
-    elif choice.startswith("set_mode_"):
-        mode = "album" if choice == "set_mode_album" else "file"
-        set_user_default_mode(user_id, mode)
+    elif choice == "set_mode_album":
+        set_user_default_mode(user_id, "album")
+        await show_settings_menu(update, context, query)
+    elif choice == "set_mode_file":
+        set_user_default_mode(user_id, "file")
         await show_settings_menu(update, context, query)
 
 
