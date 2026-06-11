@@ -131,16 +131,17 @@ async def reels_command(update: Update, context):
     )
     
     try:
-        result = await get_user_reels(username)
+        # تغییر ترتیب: اول روش دوم (posts) که مطمئن‌تره
+        result = await get_user_reels_v2(username)
         
         if not result or not result.get("items"):
-            logger.info(f"Method 1 failed for {username}, trying V2...")
-            await processing_msg.edit_text(f"🔄 در حال تلاش با روش دوم...")
-            result = await get_user_reels_v2(username)
+            logger.info(f"V2 failed for {username}, trying method 1...")
+            await processing_msg.edit_text(f"🔄 در حال تلاش با روش دیگر...")
+            result = await get_user_reels(username)
         
         if not result or not result.get("items"):
-            logger.info(f"Method 2 failed for {username}, trying Direct...")
-            await processing_msg.edit_text(f"🔄 در حال تلاش با روش سوم...")
+            logger.info(f"Method 1 failed for {username}, trying Direct...")
+            await processing_msg.edit_text(f"🔄 در حال تلاش با روش آخر...")
             result = await get_user_reels_direct(username)
         
         if not result or not result.get("items"):
@@ -165,7 +166,6 @@ async def reels_command(update: Update, context):
     except Exception as e:
         logger.error(f"Error in reels_command: {e}")
         await processing_msg.edit_text(f"❌ خطا: {str(e)[:100]}")
-
 
 async def show_reel_item(update: Update, context, username: str, index: int):
     """نمایش یک ریل با دکمه‌های قبلی/بعدی"""
