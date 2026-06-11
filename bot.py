@@ -185,8 +185,9 @@ async def handle_link(update: Update, context):
             await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
             return
 
-        # ========== عکس تک ==========
-if is_single and has_photo:
+       # ========== عکس تک ==========
+
+    if is_single and has_photo:
     default_mode = get_user_default_mode(user_id)
     
     if default_mode == "file":
@@ -208,7 +209,6 @@ if is_single and has_photo:
         ])
         await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
     return
-    
         # ========== کاروسل ==========
         if default_mode == "album":
             print("🎬 ارسال کاروسل به صورت آلبوم ترکیبی")
