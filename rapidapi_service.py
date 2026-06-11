@@ -132,14 +132,32 @@ async def get_instagram_media(post_url: str) -> dict | None:
     for item in data:
         urls = item.get("urls", [])           # لیست لینک‌های ویدیو (با کیفیت‌های مختلف)
         picture_url = item.get("pictureUrl")  # لینک عکس (اگه ویدیو نباشه)
-
+        
+        # بررسی نوع مدیا از فیلدهای مختلف API
+        media_type = item.get("media_type") or item.get("type") or item.get("__typename", "")
+        
+        # اگر صراحتاً ویدیو است
+        if media_type in ("Video", "video", "GraphVideo", "GraphSidecar", 2):
+            if urls:
+                best = max(urls, key=lambda x: x.get("quality", 0))
+                items.append({"type": "video", "url": best["url"]})
+                continue  # رد شدن از بقیه بررسی‌ها
+        
+        # اگر صراحتاً عکس است
+        if media_type in ("Image", "image", "GraphImage", 1):
+            if picture_url:
+                items.append({"type": "photo", "url": picture_url})
+                continue
+        
+        # حالت fallback: بررسی بر اساس وجود urls یا picture_url
         if urls:
-            # بهترین کیفیت ویدیو رو انتخاب میکنه (عدد quality بزرگتر = کیفیت بهتر)
+            # این یک ویدیو است
             best = max(urls, key=lambda x: x.get("quality", 0))
-            items.append({"type": "video", "url": best["url"]})  # به لیست اضافه میکنه
+            items.append({"type": "video", "url": best["url"]})
         elif picture_url:
-            # اگه ویدیو نبود ولی عکس بود، عکس رو اضافه میکنه
+            # فقط عکس
             items.append({"type": "photo", "url": picture_url})
+        # اگر هر دو نبود، نادیده گرفته میشه
 
     # اگه چیزی پیدا شد dict برمیگردونه، وگرنه None
     return {"caption": caption, "items": items} if items else None
