@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی با تنظیمات کاربر
+# bot.py - نسخه نهایی با حذف منوی اضافی در حالت فایل
 
 import aiohttp
 from io import BytesIO
@@ -98,6 +98,49 @@ async def settings_command(update: Update, context):
     await show_settings_menu(update, context)
 
 
+async def send_media_group(chat_id, context, items, caption):
+    """ارسال آلبوم ترکیبی"""
+    media_group = []
+    for i, item in enumerate(items):
+        current_caption = caption if i == 0 else None
+        if item["type"] == "video":
+            media_group.append(InputMediaVideo(
+                media=item["url"], 
+                caption=current_caption,
+                supports_streaming=True
+            ))
+        else:  # photo
+            media_group.append(InputMediaPhoto(
+                media=item["url"], 
+                caption=current_caption
+            ))
+    
+    for i in range(0, len(media_group), 10):
+        await context.bot.send_media_group(
+            chat_id=chat_id,
+            media=media_group[i:i+10]
+        )
+
+
+async def send_as_files(chat_id, context, items, caption):
+    """ارسال همه مدیاها به صورت فایل جداگانه"""
+    for i, item in enumerate(items):
+        current_caption = caption if i == 0 else None
+        if item["type"] == "video":
+            await context.bot.send_video(
+                chat_id=chat_id,
+                video=item["url"],
+                supports_streaming=True,
+                caption=current_caption
+            )
+        else:
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=item["url"],
+                caption=current_caption
+            )
+
+
 async def handle_link(update: Update, context):
     url = update.message.text.strip()
     user_id = update.effective_user.id
@@ -155,51 +198,19 @@ async def handle_link(update: Update, context):
         default_mode = get_user_default_mode(user_id)
         
         if default_mode == "album":
-            # مستقیماً به حالت آلبوم برو
-            await send_media_group(update, context, result["items"], result.get("caption", ""), update.effective_chat.id)
+            # مستقیماً آلبوم ترکیبی بفرست
+            await send_media_group(update.effective_chat.id, context, items, result.get("caption", ""))
             context.user_data.pop("pending_result", None)
             await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
         else:
-            # نمایش منوی انتخاب برای کاربر
-            photo_count = sum(1 for i in items if i["type"] == "photo")
-            video_count = sum(1 for i in items if i["type"] == "video")
-            
-            text = f"📚 <b>کاروسل پیدا شد!</b>\n\n📸 عکس: {photo_count} عدد\n🎥 ویدیو: {video_count} عدد\n\nچطور ارسال کنم؟"
-            
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎬 آلبوم ترکیبی (عکس+ویدیو)", callback_data="send_album")],
-                [InlineKeyboardButton("📁 همه به صورت فایل", callback_data="send_file")]
-            ])
-            
-            await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+            # حالت فایل: مستقیماً به صورت فایل بفرست (بدون منوی اضافی)
+            await send_as_files(update.effective_chat.id, context, items, result.get("caption", ""))
+            context.user_data.pop("pending_result", None)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
 
     except Exception as e:
         logger.error(f"Error: {e}")
         await processing_msg.edit_text("❌ خطایی رخ داد. دوباره امتحان کن.")
-
-
-async def send_media_group(update, context, items, caption, chat_id):
-    """ارسال آلبوم ترکیبی"""
-    media_group = []
-    for i, item in enumerate(items):
-        current_caption = caption if i == 0 else None
-        if item["type"] == "video":
-            media_group.append(InputMediaVideo(
-                media=item["url"], 
-                caption=current_caption,
-                supports_streaming=True
-            ))
-        else:  # photo
-            media_group.append(InputMediaPhoto(
-                media=item["url"], 
-                caption=current_caption
-            ))
-    
-    for i in range(0, len(media_group), 10):
-        await context.bot.send_media_group(
-            chat_id=chat_id,
-            media=media_group[i:i+10]
-        )
 
 
 async def handle_format_choice(update: Update, context):
@@ -267,7 +278,7 @@ async def handle_format_choice(update: Update, context):
         )
         return
     
-    # پردازش ارسال مدیا
+    # پردازش ارسال مدیا برای عکس‌های تکی (که منو دارن)
     result = context.user_data.get("pending_result")
     if not result:
         await query.edit_message_text("❌ اطلاعات منقضی شد. لینک رو دوباره بفرست.")
@@ -297,31 +308,12 @@ async def handle_format_choice(update: Update, context):
                     photo=item["url"],
                     caption=caption
                 )
-            else:
+            else:  # send_file
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=item["url"],
                     caption=caption
                 )
-        else:
-            if choice == "send_album":
-                await send_media_group(update, context, items, caption, update.effective_chat.id)
-            else:  # send_file
-                for i, item in enumerate(items):
-                    current_caption = caption if i == 0 else None
-                    if item["type"] == "video":
-                        await context.bot.send_video(
-                            chat_id=update.effective_chat.id,
-                            video=item["url"],
-                            supports_streaming=True,
-                            caption=current_caption
-                        )
-                    else:
-                        await context.bot.send_document(
-                            chat_id=update.effective_chat.id,
-                            document=item["url"],
-                            caption=current_caption
-                        )
 
         await sending_msg.delete()
         context.user_data.pop("pending_result", None)
