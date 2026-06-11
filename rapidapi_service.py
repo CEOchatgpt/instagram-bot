@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه کامل با پشتیبانی از ریلز
+# rapidapi_service.py - نسخه اصلاح شده
 
 import re
 import aiohttp
@@ -216,11 +216,7 @@ async def get_instagram_story(username: str, story_id: str = None):
 async def get_user_reels(username: str, max_id: str = ""):
     """
     دریافت لیست ریل‌های یک کاربر
-    Returns: {
-        "items": [{"id": "...", "url": "...", "caption": "...", "like_count": 0, "comment_count": 0}],
-        "next_max_id": "...",
-        "username": "..."
-    }
+    پشتیبانی از ساختارهای مختلف پاسخ API
     """
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -238,7 +234,6 @@ async def get_user_reels(username: str, max_id: str = ""):
             async with session.post(url, json=payload, headers=headers, timeout=25) as resp:
                 data = await resp.json()
                 
-                # لاگ برای دیباگ
                 logger.info(f"Reels API response status: {resp.status}")
                 
                 result = data.get("result") or data
@@ -249,88 +244,129 @@ async def get_user_reels(username: str, max_id: str = ""):
                 
                 items = []
                 
-                # پیدا کردن لیست ریل‌ها در ساختار پاسخ
+                # ============================================
+                # پشتیبانی از ساختارهای مختلف پاسخ
+                # ============================================
+                
                 reel_list = []
+                
                 if isinstance(result, dict):
-                    if "reels" in result:
+                    # ساختار 1: {'edges': [...], 'page_info': {...}}
+                    if "edges" in result:
+                        for edge in result["edges"]:
+                            if "node" in edge:
+                                reel_list.append(edge["node"])
+                            else:
+                                reel_list.append(edge)
+                    
+                    # ساختار 2: {'reels': [...]}
+                    elif "reels" in result:
                         reel_list = result["reels"]
+                    
+                    # ساختار 3: {'items': [...]}
                     elif "items" in result:
                         reel_list = result["items"]
+                    
+                    # ساختار 4: {'media': [...]}
                     elif "media" in result:
                         reel_list = result["media"]
+                    
+                    # ساختار 5: {'data': {'user': {'edge_owner_to_timeline_media': {'edges': [...]}}}}
+                    elif "data" in result:
+                        data_obj = result.get("data", {})
+                        user_obj = data_obj.get("user", {})
+                        media_obj = user_obj.get("edge_owner_to_timeline_media", {})
+                        edges = media_obj.get("edges", [])
+                        for edge in edges:
+                            if "node" in edge:
+                                reel_list.append(edge["node"])
+                    
+                    # ساختار 6: اگر خود result یک لیست نبود ولی داخلش کلید دیگه‌ای داشت
                     else:
-                        # بررسی اگر خود result شامل آیتم‌هاست
-                        for key in ["graphql", "data", "user", "edge_owner_to_timeline_media"]:
-                            if key in result:
-                                reel_list = result[key].get("edges", []) or result[key].get("media", [])
-                                break
-                        if not reel_list and isinstance(result, list):
-                            reel_list = result
+                        # چک کردن تمام مقادیر برای پیدا کردن لیست
+                        for key, value in result.items():
+                            if isinstance(value, list) and len(value) > 0:
+                                if isinstance(value[0], dict):
+                                    reel_list = value
+                                    logger.info(f"Found reels in key: {key}")
+                                    break
+                
                 elif isinstance(result, list):
                     reel_list = result
                 
                 if not reel_list:
                     logger.warning(f"No reels list found for {username}")
                     logger.info(f"Result structure: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+                    
+                    # لاگ کامل برای دیباگ (فقط 500 کاراکتر اول)
+                    logger.debug(f"Full result: {json.dumps(result, ensure_ascii=False)[:500]}")
                     return None
+                
+                logger.info(f"Processing {len(reel_list)} potential reels for {username}")
                 
                 for reel in reel_list:
                     if not isinstance(reel, dict):
                         continue
                     
-                    # استخراج رسانه واقعی (بعضی APIها داخل node یا media می‌گذارند)
-                    media_item = reel
-                    if "node" in reel:
-                        media_item = reel["node"]
-                    if "media" in reel:
-                        media_item = reel["media"]
+                    # بررسی اگر ویدیو/ریل است
+                    media_type = reel.get("media_type", 0)
+                    is_video = reel.get("is_video", False) or media_type == 2
+                    
+                    # اگر ویدیو نیست، رد کن (فقط ریل‌ها)
+                    if not is_video:
+                        # چک کردن اگر video_url مستقیم داره
+                        if not reel.get("video_url") and not reel.get("video_versions"):
+                            continue
                     
                     video_url = None
                     
                     # روش‌های مختلف دریافت ویدیو
-                    video_versions = media_item.get("video_versions")
+                    video_versions = reel.get("video_versions")
                     if video_versions and isinstance(video_versions, list) and video_versions:
                         best = max(video_versions, key=lambda x: x.get("height", 0) or x.get("width", 0))
                         video_url = best.get("url")
                     
                     if not video_url:
-                        video_url = media_item.get("video_url")
+                        video_url = reel.get("video_url")
                     
                     if not video_url:
-                        clips = media_item.get("clips", [])
+                        clips = reel.get("clips", [])
                         if clips and isinstance(clips, list) and clips:
                             video_url = clips[0].get("url")
                     
                     if not video_url:
-                        # چک کردن اگر ویدیو نیست، رد کن
                         continue
                     
                     # استخراج کپشن
-                    caption = media_item.get("caption", "")
+                    caption = reel.get("caption", "")
                     if not caption:
-                        caption = media_item.get("title", "")
+                        caption = reel.get("title", "")
                     if not caption:
-                        caption = media_item.get("text", "")
+                        caption = reel.get("text", "")
                     if not caption:
                         caption = "بدون کپشن"
                     
                     # استخراج آیدی
-                    reel_id = media_item.get("id") or media_item.get("pk") or media_item.get("code") or ""
+                    reel_id = reel.get("id") or reel.get("pk") or reel.get("code") or ""
                     
                     items.append({
                         "id": reel_id,
                         "url": video_url,
                         "caption": caption[:200] if caption else "بدون کپشن",
-                        "thumbnail": media_item.get("thumbnail_url") or media_item.get("cover_url") or "",
-                        "like_count": media_item.get("like_count", 0),
-                        "comment_count": media_item.get("comment_count", 0),
-                        "play_count": media_item.get("play_count", 0),
+                        "thumbnail": reel.get("thumbnail_url") or reel.get("cover_url") or "",
+                        "like_count": reel.get("like_count", 0),
+                        "comment_count": reel.get("comment_count", 0),
+                        "play_count": reel.get("play_count", 0),
                     })
                 
                 # گرفتن next_max_id برای صفحه‌بندی
                 next_max_id = ""
                 if isinstance(result, dict):
-                    next_max_id = result.get("next_max_id") or result.get("max_id") or ""
+                    page_info = result.get("page_info", {})
+                    if page_info:
+                        next_max_id = page_info.get("end_cursor", "")
+                    else:
+                        next_max_id = result.get("next_max_id") or result.get("max_id") or ""
                 
                 logger.info(f"Found {len(items)} reels for {username}")
                 
@@ -358,12 +394,34 @@ async def get_user_reels_v2(username: str):
             url = f"https://{RAPIDAPI_HOST}/api/instagram/posts"
             payload = {"username": username, "maxId": ""}
             
+            logger.info(f"V2: Fetching posts for {username}")
+            
             async with session.post(url, json=payload, headers=headers, timeout=25) as resp:
                 data = await resp.json()
                 result = data.get("result") or data
                 
                 items = []
-                posts_list = result.get("items", []) if isinstance(result, dict) else []
+                
+                # پیدا کردن لیست پست‌ها
+                posts_list = []
+                if isinstance(result, dict):
+                    if "items" in result:
+                        posts_list = result["items"]
+                    elif "edges" in result:
+                        for edge in result["edges"]:
+                            if "node" in edge:
+                                posts_list.append(edge["node"])
+                    elif "data" in result:
+                        user_data = result.get("data", {}).get("user", {})
+                        media = user_data.get("edge_owner_to_timeline_media", {})
+                        edges = media.get("edges", [])
+                        for edge in edges:
+                            if "node" in edge:
+                                posts_list.append(edge["node"])
+                elif isinstance(result, list):
+                    posts_list = result
+                
+                logger.info(f"V2: Found {len(posts_list)} posts for {username}")
                 
                 for post in posts_list:
                     if not isinstance(post, dict):
@@ -374,7 +432,13 @@ async def get_user_reels_v2(username: str):
                     is_video = post.get("is_video", False) or media_type == 2
                     
                     if is_video:
-                        video_url = post.get("video_url") or post.get("video_versions", [{}])[0].get("url")
+                        video_url = post.get("video_url")
+                        if not video_url:
+                            video_versions = post.get("video_versions", [])
+                            if video_versions:
+                                best = max(video_versions, key=lambda x: x.get("height", 0))
+                                video_url = best.get("url")
+                        
                         if video_url:
                             items.append({
                                 "id": post.get("id", ""),
@@ -394,4 +458,56 @@ async def get_user_reels_v2(username: str):
                 }
     except Exception as e:
         logger.error(f"Error in get_user_reels_v2: {e}")
+        return None
+
+
+async def get_user_reels_direct(username: str):
+    """
+    نسخه سوم - دریافت مستقیم با استفاده از endpoint profile
+    """
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST,
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://{RAPIDAPI_HOST}/api/instagram/profile"
+            payload = {"username": username}
+            
+            logger.info(f"Direct: Fetching profile for {username}")
+            
+            async with session.post(url, json=payload, headers=headers, timeout=25) as resp:
+                data = await resp.json()
+                result = data.get("result") or data
+                
+                items = []
+                
+                if isinstance(result, dict):
+                    # بررسی اگر recent_reels وجود داشته باشد
+                    recent_reels = result.get("recent_reels", [])
+                    if recent_reels:
+                        for reel in recent_reels:
+                            if isinstance(reel, dict):
+                                video_url = reel.get("video_url")
+                                if video_url:
+                                    items.append({
+                                        "id": reel.get("id", ""),
+                                        "url": video_url,
+                                        "caption": reel.get("caption", "بدون کپشن"),
+                                        "like_count": reel.get("like_count", 0),
+                                        "comment_count": reel.get("comment_count", 0),
+                                    })
+                
+                logger.info(f"Direct - Found {len(items)} reels for {username}")
+                
+                return {
+                    "items": items,
+                    "next_max_id": "",
+                    "username": username
+                } if items else None
+                
+    except Exception as e:
+        logger.error(f"Error in get_user_reels_direct: {e}")
         return None
