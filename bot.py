@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی بدون خطا
+# bot.py - نسخه نهایی
 
 import aiohttp
 from io import BytesIO
@@ -20,7 +20,6 @@ from rapidapi_service import get_instagram_media
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Rate Limiting
 RATE_LIMIT = 3
 WINDOW_SECS = 60
 user_requests: dict[int, list[float]] = defaultdict(list)
@@ -93,7 +92,7 @@ async def handle_link(update: Update, context):
         has_photo = any(item["type"] == "photo" for item in items)
         is_single = len(items) == 1
 
-        # ریلز/ویدیو تک → فوراً ارسال
+        # ویدیو تک
         if is_single and has_video:
             await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ویدیو پیدا شد، در حال ارسال...")
             item = items[0]
@@ -114,25 +113,24 @@ async def handle_link(update: Update, context):
                 [InlineKeyboardButton("🖼 عکس معمولی", callback_data="send_photo")],
                 [InlineKeyboardButton("📁 فایل (کیفیت اصلی)", callback_data="send_file")]
             ])
-        else:
-            # کاروسل
-            photo_count = sum(1 for i in items if i["type"] == "photo")
-            video_count = sum(1 for i in items if i["type"] == "video")
-            
-            text = f"📚 <b>کاروسل پیدا شد!</b>\n\n"
-            text += f"📸 عکس: {photo_count} عدد\n"
-            text += f"🎥 ویدیو: {video_count} عدد\n\n"
-            text += "چطور ارسال کنم؟"
-            
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🖼 فقط عکس‌ها (آلبوم)", callback_data="send_photo")],
-                [InlineKeyboardButton("📁 همه به صورت فایل (عکس+ویدیو)", callback_data="send_file")]
-            ])
+            await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+            return
 
+        # کاروسل
+        photo_count = sum(1 for i in items if i["type"] == "photo")
+        video_count = sum(1 for i in items if i["type"] == "video")
+        
+        text = f"📚 <b>کاروسل پیدا شد!</b>\n\n📸 عکس: {photo_count} عدد\n🎥 ویدیو: {video_count} عدد\n\nچطور ارسال کنم؟"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🖼 عکس‌ها به صورت آلبوم", callback_data="send_photo")],
+            [InlineKeyboardButton("📁 همه به صورت فایل", callback_data="send_file")]
+        ])
+        
         await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
-        logger.error(f"Error in handle_link: {e}")
+        logger.error(f"Error: {e}")
         await processing_msg.edit_text("❌ خطایی رخ داد. دوباره امتحان کن.")
 
 
@@ -156,7 +154,6 @@ async def handle_format_choice(update: Update, context):
 
     try:
         if len(items) == 1:
-            # ========== مدیا تکی ==========
             item = items[0]
             if item["type"] == "video":
                 await context.bot.send_video(
@@ -171,42 +168,35 @@ async def handle_format_choice(update: Update, context):
                     photo=item["url"],
                     caption=caption
                 )
-            else:  # send_file
+            else:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=item["url"],
                     caption=caption
                 )
         else:
-            # ========== کاروسل ==========
             if choice == "send_photo":
-                # فقط عکس‌ها رو فیلتر کن
+                # فقط عکس‌ها
                 photo_items = [item for item in items if item["type"] == "photo"]
                 
                 if not photo_items:
-                    await sending_msg.edit_text("⚠️ این کاروسل فقط ویدیو دارد، لطفاً گزینه «فایل» را انتخاب کنید.")
+                    await sending_msg.edit_text("⚠️ این کاروسل فقط ویدیو دارد.")
                     return
                 
-                # ارسال به صورت آلبوم عکس
                 media_group = []
                 for i, item in enumerate(photo_items):
                     current_caption = caption if i == 0 else None
                     media_group.append(InputMediaPhoto(media=item["url"], caption=current_caption))
                 
-                # ارسال در دسته‌های حداکثر ۱۰ تایی
                 for i in range(0, len(media_group), 10):
                     await context.bot.send_media_group(
                         chat_id=update.effective_chat.id,
                         media=media_group[i:i+10]
                     )
-                        
             else:  # send_file
-                # ارسال همه آیتم‌ها به صورت فایل جداگانه
-                first_item = True
-                
-                for item in items:
-                    current_caption = caption if first_item else None
-                    
+                # همه چیز رو به صورت فایل بفرست
+                for i, item in enumerate(items):
+                    current_caption = caption if i == 0 else None
                     if item["type"] == "video":
                         await context.bot.send_video(
                             chat_id=update.effective_chat.id,
@@ -214,31 +204,27 @@ async def handle_format_choice(update: Update, context):
                             supports_streaming=True,
                             caption=current_caption
                         )
-                    else:  # photo
+                    else:
                         await context.bot.send_document(
                             chat_id=update.effective_chat.id,
                             document=item["url"],
                             caption=current_caption
                         )
-                    
-                    first_item = False
 
         await sending_msg.delete()
         context.user_data.pop("pending_result", None)
-
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="✅ با موفقیت ارسال شد!\n\nلینک بعدی رو بفرست 🚀"
+            text="✅ ارسال شد!"
         )
 
     except Exception as e:
-        logger.error(f"Error in handle_format_choice: {e}")
-        await sending_msg.edit_text(f"❌ خطا در ارسال: {str(e)[:100]}")
+        logger.error(f"Error: {e}")
+        await sending_msg.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
