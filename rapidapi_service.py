@@ -76,58 +76,52 @@ async def get_instagram_highlights(username: str):
         return []
 
 
-async def get_instagram_highlight_stories(highlight_id: str, title: str = "هایلایت"):
-    """دریافت استوری‌های هایلایت با استفاده از متد پایدار و مستقیم لینک"""
-    # ساخت لینک مستقیم و استاندارد هایلایت
-    highlight_url = f"https://www.instagram.com/stories/highlights/{highlight_id}/"
-    try:
-        print(f"🔄 تلاش برای دریافت هایلایت از طریق لینک مستقیم: {highlight_url}")
-        # استفاده از همان تابعی که لینک‌های مستقیم را با موفقیت دانلود می‌کند
-        result = await get_instagram_media(highlight_url)
-        if result and result.get("items"):
-            # جایگزین کردن کپشن با عنوان اصلی هایلایت
-            result["caption"] = f"📚 {title}"
-            return result
-    except Exception as e:
-        print(f"❌ خطا در متد مستقیم هایلایت: {e}")
+async def get_instagram_highlight_stories(highlight_id: str, title: str = "Highlight"):
+    """دریافت استوری‌های داخل یک هایلایت بر اساس ID"""
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST,
+        "Content-Type": "application/json"
+    }
     
-    # روش زاپاس (Fallback) در صورت ناموفق بودن روش اول
-    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST, "Content-Type": "application/json"}
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://{RAPIDAPI_HOST}/api/instagram/highlightStories"
-            payload = {"highlightId": str(highlight_id), "highlight_id": str(highlight_id)}
-            async with session.post(url, json=payload, headers=headers, timeout=25) as resp:
-                data = await resp.json()
-                items = []
-                result_data = data.get("result") or data.get("items") or data
+    # اطمینان از اینکه شناسه فقط بخش عددی یا ساختار درست است
+    hl_clean = highlight_id.split(":")[-1] if ":" in highlight_id else highlight_id
+    
+    # آدرس اندپوینت دریافت استوری‌های هایلایت بر اساس ID
+    api_url = f"https://{RAPIDAPI_HOST}/api/instagram/highlightStories"
+    
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                # ارسال پارامتر به صورت کوئری یا بادی بر اساس مستندات سرویس شما
+                async with session.get(api_url, params={"highlightId": hl_clean}, headers=headers, timeout=15) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # استخراج آیتم‌ها بر اساس پاسخ ساختار سرویس instagram120
+                        items_list = []
+                        raw_items = data.get("result") or data.get("items") or []
+                        
+                        for item in raw_items:
+                            urls = item.get("urls", [])
+                            if not urls:
+                                continue
+                            best_url = max(urls, key=lambda x: x.get("quality", 0)).get("url")
+                            is_video = urls[0].get("extension") == "mp4" or "mp4" in best_url
+                            
+                            items_list.append({
+                                "type": "video" if is_video else "photo",
+                                "url": best_url
+                            })
+                            
+                        if items_list:
+                            return {"items": items_list, "caption": f"📚 هایلایت: {title}"}
+            break
+        except Exception as e:
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY * attempt)
                 
-                if isinstance(result_data, dict) and "items" in result_data:
-                    stories = result_data["items"]
-                elif isinstance(result_data, list):
-                    stories = result_data
-                else:
-                    stories = [result_data] if isinstance(result_data, dict) else []
-
-                for story in stories:
-                    if not isinstance(story, dict): continue
-                    
-                    # بررسی ویدیو
-                    video = story.get("video_versions") or story.get("video") or story.get("video_url")
-                    if video:
-                        url_val = video[0].get("url") if isinstance(video, list) else (video if isinstance(video, str) else story.get("video_url"))
-                        if url_val: items.append({"type": "video", "url": url_val}); continue
-                    
-                    # بررسی عکس
-                    images = story.get("image_versions2", {}).get("candidates", []) or story.get("images", []) or story.get("display_url")
-                    if images:
-                        url_val = images[0].get("url") if isinstance(images, list) else (images if isinstance(images, str) else story.get("display_url"))
-                        if url_val: items.append({"type": "photo", "url": url_val})
-                
-                return {"caption": f"📚 {title}", "items": items} if items else None
-    except Exception as e:
-        print(f"❌ خطا در روش زاپاس هایلایت: {e}")
-        return None
+    return None
 
 
 async def get_instagram_story(username: str, story_id: str = None):
