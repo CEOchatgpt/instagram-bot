@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی با آلبوم ترکیبی عکس و ویدیو
+# bot.py - نسخه نهایی با تنظیمات کاربر
 
 import aiohttp
 from io import BytesIO
@@ -16,6 +16,7 @@ from telegram.ext import (
 
 from config import BOT_TOKEN
 from rapidapi_service import get_instagram_media
+from user_settings import get_user_default_mode, set_user_default_mode, get_user_settings_keyboard
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ def is_rate_limited(user_id: int) -> tuple[bool, int]:
 async def start(update: Update, context):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🚀 دانلود جدید", callback_data="new_download")],
+        [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings")],
         [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
     ])
     
@@ -52,15 +54,48 @@ async def start(update: Update, context):
     )
 
 
+async def show_settings_menu(update: Update, context, query=None):
+    """نمایش منوی تنظیمات"""
+    user_id = update.effective_user.id
+    current_mode = get_user_default_mode(user_id)
+    
+    mode_text = "🎬 آلبوم ترکیبی (عکس+ویدیو)" if current_mode == "album" else "📁 فایل"
+    
+    text = (
+        "⚙️ <b>تنظیمات ارسال</b>\n\n"
+        f"حالت فعلی: {mode_text}\n\n"
+        "حالت پیشفرض ارسال رو انتخاب کن:\n"
+        "• آلبوم ترکیبی: عکس و ویدیو در یک آلبوم\n"
+        "• فایل: هر مدیا به صورت فایل جداگانه"
+    )
+    
+    keyboard = get_user_settings_keyboard(user_id)
+    
+    if query:
+        await query.edit_message_text(text, parse_mode='HTML', reply_markup=keyboard)
+    else:
+        await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+
+
 async def help_command(update: Update, context):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
+    ])
     await update.message.reply_text(
         "📖 <b>راهنمای ربات</b>\n\n"
         "🔹 ریلز → فوراً ویدیو\n"
         "🔹 عکس تک → دو گزینه\n"
-        "🔹 کاروسل → آلبوم یکپارچه (عکس معمولی) یا فایل\n\n"
+        "🔹 کاروسل → بر اساس تنظیمات شما\n\n"
+        "💡 می‌تونی از طریق /settings حالت ارسال رو تغییر بدی.\n\n"
         "⚡ ساخته شده با Python + python-telegram-bot",
-        parse_mode='HTML'
+        parse_mode='HTML',
+        reply_markup=keyboard
     )
+
+
+async def settings_command(update: Update, context):
+    """دستور /settings"""
+    await show_settings_menu(update, context)
 
 
 async def handle_link(update: Update, context):
@@ -116,22 +151,55 @@ async def handle_link(update: Update, context):
             await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
             return
 
-        # کاروسل
-        photo_count = sum(1 for i in items if i["type"] == "photo")
-        video_count = sum(1 for i in items if i["type"] == "video")
+        # کاروسل - بررسی حالت پیشفرض کاربر
+        default_mode = get_user_default_mode(user_id)
         
-        text = f"📚 <b>کاروسل پیدا شد!</b>\n\n📸 عکس: {photo_count} عدد\n🎥 ویدیو: {video_count} عدد\n\nچطور ارسال کنم؟"
-        
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎬 آلبوم ترکیبی (عکس+ویدیو)", callback_data="send_album")],
-            [InlineKeyboardButton("📁 همه به صورت فایل", callback_data="send_file")]
-        ])
-        
-        await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+        if default_mode == "album":
+            # مستقیماً به حالت آلبوم برو
+            await send_media_group(update, context, result["items"], result.get("caption", ""), update.effective_chat.id)
+            context.user_data.pop("pending_result", None)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
+        else:
+            # نمایش منوی انتخاب برای کاربر
+            photo_count = sum(1 for i in items if i["type"] == "photo")
+            video_count = sum(1 for i in items if i["type"] == "video")
+            
+            text = f"📚 <b>کاروسل پیدا شد!</b>\n\n📸 عکس: {photo_count} عدد\n🎥 ویدیو: {video_count} عدد\n\nچطور ارسال کنم؟"
+            
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎬 آلبوم ترکیبی (عکس+ویدیو)", callback_data="send_album")],
+                [InlineKeyboardButton("📁 همه به صورت فایل", callback_data="send_file")]
+            ])
+            
+            await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error(f"Error: {e}")
         await processing_msg.edit_text("❌ خطایی رخ داد. دوباره امتحان کن.")
+
+
+async def send_media_group(update, context, items, caption, chat_id):
+    """ارسال آلبوم ترکیبی"""
+    media_group = []
+    for i, item in enumerate(items):
+        current_caption = caption if i == 0 else None
+        if item["type"] == "video":
+            media_group.append(InputMediaVideo(
+                media=item["url"], 
+                caption=current_caption,
+                supports_streaming=True
+            ))
+        else:  # photo
+            media_group.append(InputMediaPhoto(
+                media=item["url"], 
+                caption=current_caption
+            ))
+    
+    for i in range(0, len(media_group), 10):
+        await context.bot.send_media_group(
+            chat_id=chat_id,
+            media=media_group[i:i+10]
+        )
 
 
 async def handle_format_choice(update: Update, context):
@@ -139,6 +207,67 @@ async def handle_format_choice(update: Update, context):
     await query.answer()
 
     choice = query.data
+    user_id = update.effective_user.id
+    
+    # پردازش دکمه‌های تنظیمات
+    if choice == "show_settings":
+        await show_settings_menu(update, context, query)
+        return
+    
+    if choice == "back_to_main":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚀 دانلود جدید", callback_data="new_download")],
+            [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings")],
+            [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
+        ])
+        await query.edit_message_text(
+            "<b>👋 صفحه اصلی</b>\n\nلینک اینستاگرام خود را بفرستید.",
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+        return
+    
+    if choice == "show_help":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
+        ])
+        await query.edit_message_text(
+            "📖 <b>راهنمای ربات</b>\n\n"
+            "🔹 ریلز → فوراً ویدیو\n"
+            "🔹 عکس تک → دو گزینه\n"
+            "🔹 کاروسل → بر اساس تنظیمات شما\n\n"
+            "💡 می‌تونی از طریق /settings حالت ارسال رو تغییر بدی.",
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+        return
+    
+    if choice == "set_mode_album":
+        set_user_default_mode(user_id, "album")
+        await query.answer("✅ حالت آلبوم ترکیبی فعال شد!")
+        await show_settings_menu(update, context, query)
+        return
+    
+    if choice == "set_mode_file":
+        set_user_default_mode(user_id, "file")
+        await query.answer("✅ حالت فایل فعال شد!")
+        await show_settings_menu(update, context, query)
+        return
+    
+    if choice == "new_download":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings")],
+            [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
+        ])
+        await query.edit_message_text(
+            "📎 <b>لینک اینستاگرام را بفرستید</b>\n\n"
+            "هر پست، ریلز یا استوری عمومی رو برام بفرست تا برات دانلود کنم.",
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+        return
+    
+    # پردازش ارسال مدیا
     result = context.user_data.get("pending_result")
     if not result:
         await query.edit_message_text("❌ اطلاعات منقضی شد. لینک رو دوباره بفرست.")
@@ -176,31 +305,8 @@ async def handle_format_choice(update: Update, context):
                 )
         else:
             if choice == "send_album":
-                # ========== آلبوم ترکیبی عکس و ویدیو با هم ==========
-                media_group = []
-                for i, item in enumerate(items):
-                    current_caption = caption if i == 0 else None
-                    if item["type"] == "video":
-                        media_group.append(InputMediaVideo(
-                            media=item["url"], 
-                            caption=current_caption,
-                            supports_streaming=True
-                        ))
-                    else:  # photo
-                        media_group.append(InputMediaPhoto(
-                            media=item["url"], 
-                            caption=current_caption
-                        ))
-                
-                # ارسال آلبوم ترکیبی (حداکثر 10 تا در هر بار)
-                for i in range(0, len(media_group), 10):
-                    await context.bot.send_media_group(
-                        chat_id=update.effective_chat.id,
-                        media=media_group[i:i+10]
-                    )
-                
+                await send_media_group(update, context, items, caption, update.effective_chat.id)
             else:  # send_file
-                # همه چیز رو به صورت فایل بفرست
                 for i, item in enumerate(items):
                     current_caption = caption if i == 0 else None
                     if item["type"] == "video":
@@ -219,10 +325,6 @@ async def handle_format_choice(update: Update, context):
 
         await sending_msg.delete()
         context.user_data.pop("pending_result", None)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="✅ ارسال شد!"
-        )
 
     except Exception as e:
         logger.error(f"Error: {e}")
@@ -231,8 +333,10 @@ async def handle_format_choice(update: Update, context):
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
     app.add_handler(CallbackQueryHandler(handle_format_choice))
 
