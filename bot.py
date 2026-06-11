@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی
+# bot.py - نسخه نهایی با آلبوم ترکیبی عکس و ویدیو
 
 import aiohttp
 from io import BytesIO
@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 
 from telegram import (
-    Update, InputMediaPhoto, InputMediaDocument,
+    Update, InputMediaVideo, InputMediaPhoto, InputMediaDocument,
     InlineKeyboardButton, InlineKeyboardMarkup,
 )
 from telegram.ext import (
@@ -123,7 +123,7 @@ async def handle_link(update: Update, context):
         text = f"📚 <b>کاروسل پیدا شد!</b>\n\n📸 عکس: {photo_count} عدد\n🎥 ویدیو: {video_count} عدد\n\nچطور ارسال کنم؟"
         
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🖼 عکس‌ها به صورت آلبوم", callback_data="send_photo")],
+            [InlineKeyboardButton("🎬 آلبوم ترکیبی (عکس+ویدیو)", callback_data="send_album")],
             [InlineKeyboardButton("📁 همه به صورت فایل", callback_data="send_file")]
         ])
         
@@ -175,24 +175,30 @@ async def handle_format_choice(update: Update, context):
                     caption=caption
                 )
         else:
-            if choice == "send_photo":
-                # فقط عکس‌ها
-                photo_items = [item for item in items if item["type"] == "photo"]
-                
-                if not photo_items:
-                    await sending_msg.edit_text("⚠️ این کاروسل فقط ویدیو دارد.")
-                    return
-                
+            if choice == "send_album":
+                # ========== آلبوم ترکیبی عکس و ویدیو با هم ==========
                 media_group = []
-                for i, item in enumerate(photo_items):
+                for i, item in enumerate(items):
                     current_caption = caption if i == 0 else None
-                    media_group.append(InputMediaPhoto(media=item["url"], caption=current_caption))
+                    if item["type"] == "video":
+                        media_group.append(InputMediaVideo(
+                            media=item["url"], 
+                            caption=current_caption,
+                            supports_streaming=True
+                        ))
+                    else:  # photo
+                        media_group.append(InputMediaPhoto(
+                            media=item["url"], 
+                            caption=current_caption
+                        ))
                 
+                # ارسال آلبوم ترکیبی (حداکثر 10 تا در هر بار)
                 for i in range(0, len(media_group), 10):
                     await context.bot.send_media_group(
                         chat_id=update.effective_chat.id,
                         media=media_group[i:i+10]
                     )
+                
             else:  # send_file
                 # همه چیز رو به صورت فایل بفرست
                 for i, item in enumerate(items):
