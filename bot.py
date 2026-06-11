@@ -22,6 +22,7 @@ from rapidapi_service import (
     get_instagram_highlight_stories,
     get_user_reels,
     get_user_reels_v2
+    get_user_reels_direct
 )
 from user_settings import get_user_default_mode, set_user_default_mode, get_user_settings_keyboard
 
@@ -132,14 +133,20 @@ async def reels_command(update: Update, context):
     )
     
     try:
-        # تلاش با endpoint اول
+        # تلاش با روش اول (reels endpoint)
         result = await get_user_reels(username)
         
-        # اگر endpoint اول جواب نداد، از روش دوم استفاده کن
+        # اگر روش اول جواب نداد، روش دوم (posts endpoint)
         if not result or not result.get("items"):
             logger.info(f"First method failed for {username}, trying V2...")
             await processing_msg.edit_text(f"🔄 روش اول جواب نداد، در حال تلاش با روش دوم...")
             result = await get_user_reels_v2(username)
+        
+        # اگر روش دوم جواب نداد، روش سوم (profile endpoint)
+        if not result or not result.get("items"):
+            logger.info(f"Second method failed for {username}, trying Direct method...")
+            await processing_msg.edit_text(f"🔄 روش دوم جواب نداد، در حال تلاش با روش سوم...")
+            result = await get_user_reels_direct(username)
         
         if not result or not result.get("items"):
             await processing_msg.edit_text(
@@ -171,7 +178,6 @@ async def reels_command(update: Update, context):
     except Exception as e:
         logger.error(f"Error in reels_command: {e}")
         await processing_msg.edit_text(f"❌ خطا: {str(e)[:100]}")
-
 
 async def show_reel_item(update: Update, context, username: str, index: int):
     """نمایش یک ریل خاص با دکمه‌های قبلی/بعدی"""
