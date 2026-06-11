@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه نهایی و درست شده برای استوری
+# rapidapi_service.py - نسخه نهایی با پشتیبانی کامل عکس و ویدیو استوری
 
 import re
 import aiohttp
@@ -28,7 +28,7 @@ def format_caption(raw: str) -> str:
 
 
 async def get_instagram_story(username: str, story_id: str = None):
-    """دریافت استوری"""
+    """دریافت استوری با پشتیبانی کامل ویدیو"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -49,11 +49,10 @@ async def get_instagram_story(username: str, story_id: str = None):
                 data = await resp.json()
 
                 print(f"\n🔍 پاسخ کامل API استوری برای @{username}:")
-                print(json.dumps(data, indent=2, ensure_ascii=False)[:2500])
+                print(json.dumps(data, indent=2, ensure_ascii=False)[:3000])
 
                 items = []
 
-                # ساختار جدید API: data["result"]
                 stories = data.get("result") if isinstance(data, dict) else None
                 
                 if isinstance(stories, list):
@@ -61,31 +60,42 @@ async def get_instagram_story(username: str, story_id: str = None):
                         if not isinstance(story, dict):
                             continue
 
-                        # استخراج عکس (رایج‌ترین نوع استوری)
-                        image_versions = story.get("image_versions2", {}).get("candidates", [])
-                        if image_versions:
-                            # بهترین کیفیت (اولین آیتم معمولاً بهترینه)
-                            best_image = max(image_versions, key=lambda x: x.get("height", 0))
-                            items.append({
-                                "type": "photo",
-                                "url": best_image.get("url")
-                            })
-                            continue
-
-                        # اگر ویدیو هم بود (برای آینده)
-                        video_versions = story.get("video_versions") or story.get("video")
+                        # === اولویت اول: ویدیو ===
+                        video_found = False
+                        
+                        # مسیرهای مختلف ویدیو
+                        video_versions = (
+                            story.get("video_versions") or 
+                            story.get("video") or
+                            story.get("videos")
+                        )
+                        
                         if video_versions:
-                            if isinstance(video_versions, list):
-                                best_video = max(video_versions, key=lambda x: x.get("height", 0))
-                                items.append({
-                                    "type": "video",
-                                    "url": best_video.get("url")
-                                })
+                            if isinstance(video_versions, list) and video_versions:
+                                # بهترین کیفیت ویدیو
+                                best_video = max(video_versions, key=lambda x: x.get("height", 0) or x.get("width", 0))
+                                video_url = best_video.get("url")
                             else:
-                                items.append({"type": "video", "url": video_versions})
+                                video_url = video_versions.get("url") if isinstance(video_versions, dict) else video_versions
+                            
+                            if video_url:
+                                items.append({"type": "video", "url": video_url})
+                                video_found = True
+
+                        # === اگر ویدیو نبود، عکس ===
+                        if not video_found:
+                            image_versions = story.get("image_versions2", {}).get("candidates", [])
+                            if image_versions:
+                                best_image = max(image_versions, key=lambda x: x.get("height", 0))
+                                items.append({
+                                    "type": "photo",
+                                    "url": best_image.get("url")
+                                })
 
                 if items:
-                    print(f"✅ {len(items)} آیتم استوری با موفقیت استخراج شد")
+                    video_count = sum(1 for i in items if i["type"] == "video")
+                    photo_count = len(items) - video_count
+                    print(f"✅ استخراج شد: {video_count} ویدیو + {photo_count} عکس")
                     return {
                         "caption": f"📖 استوری @{username}",
                         "items": items
@@ -93,7 +103,7 @@ async def get_instagram_story(username: str, story_id: str = None):
                 else:
                     print("⚠️ هیچ آیتمی پیدا نشد")
                     return {
-                        "caption": f"📖 استوری @{username} (داده خام)",
+                        "caption": f"📖 استوری @{username}",
                         "items": [],
                         "raw": data
                     }
@@ -116,7 +126,7 @@ async def get_instagram_media(post_url: str) -> dict | None:
         print(f"📖 لینک استوری تشخیص داده شد → @{username} (ID: {story_id})")
         return await get_instagram_story(username, story_id)
 
-    # === بخش پست/ریلز (بدون تغییر) ===
+    # بخش پست/ریلز (بدون تغییر)
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
