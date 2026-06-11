@@ -485,4 +485,91 @@ async def handle_reel_callbacks(update: Update, context):
     # دانلود ریل
     if data.startswith("reel_download_"):
         index = int(data.split("_")[2])
-       
+        if index < len(reels_data["items"]):
+            item = reels_data["items"][index]
+            
+            await query.message.reply_text("📥 در حال ارسال فایل...")
+            try:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=item["url"],
+                    filename=f"reel_{reels_data['username']}_{item['id']}.mp4",
+                    caption=f"🎬 ریل از @{reels_data['username']}\n{item['caption'][:100]}"
+                )
+            except Exception as e:
+                await query.message.reply_text(f"❌ خطا در دانلود: {str(e)[:100]}")
+
+
+async def handle_callback(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    user_id = update.effective_user.id
+    
+    # هندل کردن دکمه‌های ریل
+    if data.startswith("reel_"):
+        await handle_reel_callbacks(update, context)
+        return
+    
+    if data.startswith("hl_"):
+        await handle_highlight_callback(update, context)
+        return
+    
+    if data == "new_download":
+        await query.edit_message_text("📎 لطفاً لینک اینستاگرام خود را ارسال کنید:")
+    
+    elif data == "show_settings":
+        await show_settings_menu(update, context, query)
+    
+    elif data == "show_help":
+        await help_command(update, context)
+    
+    elif data == "set_mode_album":
+        set_user_default_mode(user_id, "album")
+        await show_settings_menu(update, context, query)
+    
+    elif data == "set_mode_file":
+        set_user_default_mode(user_id, "file")
+        await show_settings_menu(update, context, query)
+    
+    elif data == "back_to_main":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚀 دانلود جدید", callback_data="new_download")],
+            [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings")],
+            [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
+        ])
+        await query.edit_message_text(
+            "<b>👋 سلام! ربات دانلود اینستاگرام</b>\n\n"
+            "لینک پست، ریلز، استوری یا هایلایت بفرست.\n"
+            "یا از دستورات زیر استفاده کن:\n\n"
+            "/profile @username - پروفایل\n"
+            "/reels @username - لیست ریل‌ها\n"
+            "/highlights @username - هایلایت‌ها",
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+
+
+def main():
+    app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
+    
+    # هندلرهای کامند
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("settings", settings_command))
+    app.add_handler(CommandHandler("profile", profile_command))
+    app.add_handler(CommandHandler("highlights", highlights_command))
+    app.add_handler(CommandHandler("reels", reels_command))
+    
+    # هندلرهای پیام و کالبک
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    
+    logger.info("🤖 ربات در حال اجراست...")
+    print("🤖 ربات در حال اجراست...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()
