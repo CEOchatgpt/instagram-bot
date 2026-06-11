@@ -68,7 +68,7 @@ async def get_instagram_highlights(username: str):
                             highlights.append({
                                 "title": h.get("title", "هایلایت"),
                                 "highlight_id": h.get("highlight_id") or h.get("id"),
-                                "count": h.get("media_count", 0)
+                                "count": h.get("count") or h.get("media_count") or 0
                             })
                 return highlights
     except Exception as e:
@@ -80,27 +80,38 @@ async def get_instagram_highlight_stories(highlight_id: str, title: str = "ها�
     """دریافت استوری‌های داخل یک هایلایت"""
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST, "Content-Type": "application/json"}
     try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://{RAPIDAPI_HOST}/api/instagram/highlightStories"
-            async with session.post(url, json={"highlightId": highlight_id}, headers=headers, timeout=25) as resp:
-                data = await resp.json()
-                items = []
-                result = data.get("result") or data.get("items") or []
-                for story in result if isinstance(result, list) else [result]:
-                    if not isinstance(story, dict): continue
-                    
-                    video_versions = story.get("video_versions") or story.get("video")
-                    if video_versions and isinstance(video_versions, list) and video_versions:
-                        best = max(video_versions, key=lambda x: x.get("height", 0) or 0)
-                        items.append({"type": "video", "url": best.get("url")})
-                        continue
-                        
-                    candidates = story.get("image_versions2", {}).get("candidates", [])
-                    if candidates:
-                        best = max(candidates, key=lambda x: x.get("height", 0))
-                        items.append({"type": "photo", "url": best.get("url")})
+        async with session.post(url, json={"highlight_id": str(highlight_id), "highlightId": str(highlight_id)}, headers=headers, timeout=25) as resp:
+            data = await resp.json()
+            items = []
+            
+            # گرفتن دیتای اصلی (بعضی سرورها دیتا را در result یا مستقیم در روت می‌فرستند)
+            result = data.get("result") or data.get("items") or data
+            
+            # اگر نتیجه یک دیکشنری حاوی دیتای هایلایت باشد یا مستقیم لیست استوری‌ها باشد
+            if isinstance(result, dict) and "items" in result:
+                stories = result["items"]
+            elif isinstance(result, list):
+                stories = result
+            else:
+                stories = [result] if isinstance(result, dict) else []
+        
+            for story in stories:
+                if not isinstance(story, dict): continue
                 
-                return {"caption": f"📚 {title}", "items": items}
+                # ۱. بررسی ویدیو
+                video_versions = story.get("video_versions") or story.get("video")
+                if video_versions and isinstance(video_versions, list):
+                    best = max(video_versions, key=lambda x: x.get("height", 0) or 0)
+                    items.append({"type": "video", "url": best.get("url")})
+                    continue
+                    
+                # ۲. بررسی عکس
+                candidates = story.get("image_versions2", {}).get("candidates", []) or story.get("images", [])
+                if candidates and isinstance(candidates, list):
+                    best = max(candidates, key=lambda x: x.get("height", 0) or 0)
+                    items.append({"type": "photo", "url": best.get("url")})
+            
+            return {"caption": f"📚 {title}", "items": items}
     except Exception as e:
         print(f"❌ خطا در دریافت استوری هایلایت: {e}")
         return None
