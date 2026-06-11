@@ -1,112 +1,125 @@
+# rapidapi_service.py - نسخه نهایی و درست
+
 import re
 import aiohttp
+import asyncio
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 
-async def get_instagram_story(username: str, story_id: str = None):
-    """دریافت استوری اینستاگرام"""
+MAX_RETRIES = 3
+RETRY_DELAY = 1
+
+
+def format_caption(raw: str) -> str:
+    text = re.sub(r'https?://\S+', '', raw)
+    hashtags = re.findall(r'#\w+', text)
+    text = re.sub(r'#\w+', '', text)
+    text = text.strip()
+    if not text:
+        text = "بدون کپشن"
+    hashtag_line = " ".join(hashtags)
+    caption = "تق ✅\n\n" + text
+    if hashtag_line:
+        caption += f"\n\n{hashtag_line}"
+    if len(caption) > 1024:
+        cut = caption[:1020].rsplit(" ", 1)[0]
+        caption = cut + " ..."
+    return caption
+
+
+async def get_instagram_media(post_url: str) -> dict | None:
+    api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
         "Content-Type": "application/json",
     }
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            if story_id:
-                # دریافت یک استوری خاص
-                url = f"https://{RAPIDAPI_HOST}/api/instagram/story"
-                payload = {"username": username, "storyId": story_id}
+    data = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    api_url,
+                    json={"url": post_url},
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+            break
+
+        except aiohttp.ClientResponseError as e:
+            if e.status < 500:
+                print(f"❌ HTTP {e.status}")
+                return None
+            print(f"⚠️ HTTP {e.status} — تلاش {attempt}/{MAX_RETRIES}")
+
+        except (TimeoutError, aiohttp.ServerConnectionError):
+            print(f"⏱ خطای اتصال — تلاش {attempt}/{MAX_RETRIES}")
+
+        except Exception as e:
+            print(f"❌ خطا: {e}")
+            return None
+
+        if attempt < MAX_RETRIES:
+            delay = RETRY_DELAY * (2 ** (attempt - 1))
+            await asyncio.sleep(delay)
+        else:
+            print("❌ همه تلاش‌ها ناموفق بود")
+            return None
+
+    if not isinstance(data, list) or not data:
+        return None
+
+    raw_caption = data[0].get("meta", {}).get("title", "")
+    caption = format_caption(raw_caption)
+
+    items = []
+
+    for item in data:
+        urls = item.get("urls", [])
+        
+        # تشخیص نوع فایل از روی extension
+        is_video = False
+        is_photo = False
+        
+        if urls:
+            # نگاه کن ببین اولین url چه فرمتی داره
+            first_url = urls[0]
+            extension = first_url.get("extension", "").lower()
+            
+            if extension == "mp4":
+                is_video = True
+            elif extension in ["jpg", "jpeg", "png", "gif"]:
+                is_photo = True
+        
+        # اگه نتونستیم از روی extension تشخیص بدیم، از روی کیفیت تشخیص بده
+        if not is_video and not is_photo and urls:
+            # ویدیوها معمولاً کیفیت‌های 480, 720, 1080 دارن
+            # عکس‌ها کیفیت‌های 1080, 3024, 3088 دارن
+            quality = urls[0].get("quality", 0)
+            if quality <= 1080:
+                # احتمالاً ویدیو - ولی باز هم مطمئن نیستیم
+                # از روی name هم چک کن
+                name = urls[0].get("name", "").upper()
+                if name == "MP4":
+                    is_video = True
+                else:
+                    is_photo = True
             else:
-                # دریافت همه استوری‌های کاربر
-                url = f"https://{RAPIDAPI_HOST}/api/instagram/stories"
-                payload = {"username": username}
+                is_photo = True
+        
+        # انتخاب بهترین کیفیت
+        if urls:
+            best = max(urls, key=lambda x: x.get("quality", 0))
+            if is_video:
+                items.append({"type": "video", "url": best["url"]})
+                print(f"✅ ویدیو - کیفیت: {best.get('quality')}")
+            else:
+                items.append({"type": "photo", "url": best["url"]})
+                print(f"✅ عکس - کیفیت: {best.get('quality')}")
+        else:
+            print(f"⚠️ آیتم بدون urls")
 
-            async with session.post(url, json=payload, headers=headers, timeout=20) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-
-                print("📋 پاسخ API استوری:", data)  # برای دیباگ
-
-                items = []
-
-                # پردازش ساختار احتمالی پاسخ
-                if isinstance(data, dict):
-                    # بعضی APIها items دارند
-                    story_items = data.get("items") or data.get("stories") or [data]
-                    
-                    for item in story_items:
-                        if not isinstance(item, dict):
-                            continue
-                            
-                        if item.get("video_url") or item.get("video_versions"):
-                            video_url = item.get("video_url") or item.get("video_versions", [{}])[0].get("url")
-                            if video_url:
-                                items.append({"type": "video", "url": video_url})
-                        elif item.get("image_url") or item.get("image_versions"):
-                            image_url = item.get("image_url") or item.get("image_versions", [{}])[0].get("url")
-                            if image_url:
-                                items.append({"type": "photo", "url": image_url})
-
-                if not items:
-                    # اگر ساختار متفاوت بود، داده خام رو برگردون
-                    return {"caption": f"📖 استوری @{username} (ساختار جدید)", "raw": data}
-
-                caption = f"📖 استوری از @{username}"
-                return {"caption": caption, "items": items}
-
-    except Exception as e:
-        print(f"❌ خطا در دریافت استوری: {e}")
-        return None
-
-
-async def get_instagram_media(post_url: str):
-    """تابع اصلی دریافت پست، ریلز و استوری"""
-    
-    if not post_url or "instagram.com" not in post_url:
-        return None
-
-    # تشخیص لینک استوری
-    story_match = re.search(r'instagram\.com/stories/([^/]+)/?(\d+)?', post_url)
-    if story_match:
-        username = story_match.group(1)
-        story_id = story_match.group(2)
-        print(f"📖 لینک استوری تشخیص داده شد → @{username} (ID: {story_id})")
-        return await get_instagram_story(username, story_id)
-
-    # تشخیص لینک‌های معمولی (پست / ریلز / کاروسل)
-    # اینجا کد قبلی خودت رو بذار (تابع get_instagram_media قدیمی‌ت)
-    # برای اینکه کامل باشه، یک نسخه ساده ازش می‌ذارم:
-
-    try:
-        headers = {
-            "X-RapidAPI-Key": RAPIDAPI_KEY,
-            "X-RapidAPI-Host": RAPIDAPI_HOST,
-            "Content-Type": "application/json",
-        }
-
-        async with aiohttp.ClientSession() as session:
-            url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
-            payload = {"url": post_url}
-
-            async with session.post(url, json=payload, headers=headers, timeout=20) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-
-                print("📋 پاسخ API پست:", data)  # دیباگ
-
-                # پردازش پاسخ پست (باید با کد قبلی‌ت تطبیق بدم)
-                caption = data.get("caption", "📸 پست اینستاگرام")
-                items = []
-
-                if isinstance(data, dict) and "items" in data:
-                    for item in data["items"]:
-                        if item.get("video_url"):
-                            items.append({"type": "video", "url": item["video_url"]})
-                        elif item.get("image_url"):
-                            items.append({"type": "photo", "url": item["image_url"]})
-
-                return {"caption": caption, "items": items} if items else None
-
-    except Exception as e:
-        print(f"❌ خطا در دریافت پست: {e}")
-        return None
+    return {"caption": caption, "items": items} if items else None
