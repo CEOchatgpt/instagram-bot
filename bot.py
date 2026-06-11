@@ -1,7 +1,7 @@
-# bot.py - نسخه نهایی و اصلاح‌شده با پشتیبانی کامل هایلایت
+# bot.py - نسخه نهایی اصلاح‌شده و پایدار با پشتیبانی کامل از هایلایت
 
 import aiohttp
-import asyncio  # ← این خط اضافه شد
+import asyncio
 import logging
 import time
 from collections import defaultdict
@@ -49,7 +49,7 @@ async def start(update: Update, context):
         [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
     ])
     
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "<b>👋 سلام! ربات دانلود اینستاگرام</b>\n\n"
         "لینک پست، ریلز، استوری یا هایلایت بفرست.\n"
         "یا دستور /highlights @username بزن.\n\n"
@@ -61,10 +61,10 @@ async def start(update: Update, context):
 
 async def profile_command(update: Update, context):
     if not context.args:
-        await update.message.reply_text("⚠️ نحوه استفاده:\n/profile cristiano")
+        await update.effective_message.reply_text("⚠️ نحوه استفاده:\n/profile cristiano")
         return
     username = context.args[0].strip("@")
-    processing = await update.message.reply_text(f"📊 در حال دریافت پروفایل @{username}...")
+    processing = await update.effective_message.reply_text(f"📊 در حال دریافت پروفایل @{username}...")
 
     try:
         profile = await get_instagram_profile(username)
@@ -98,11 +98,11 @@ async def profile_command(update: Update, context):
 
 async def highlights_command(update: Update, context):
     if not context.args:
-        await update.message.reply_text("⚠️ نحوه استفاده:\n/highlights cristiano")
+        await update.effective_message.reply_text("⚠️ نحوه استفاده:\n/highlights cristiano")
         return
 
     username = context.args[0].strip("@")
-    processing = await update.message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
+    processing = await update.effective_message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
 
     try:
         highlights = await get_instagram_highlights(username)
@@ -112,8 +112,10 @@ async def highlights_command(update: Update, context):
 
         keyboard = []
         for h in highlights[:15]:
+            # استخراج درست شمارنده مدیا
+            highlight_count = h.get("count") or h.get("media_count") or 0
             keyboard.append([InlineKeyboardButton(
-                f"📚 {h.get('title', 'هایلایت')} ({h.get('count', 0)})",
+                f"📚 {h.get('title', 'هایلایت')} ({highlight_count})",
                 callback_data=f"hl:{h.get('highlight_id')}:{h.get('title', 'هایلایت')}"
             )])
 
@@ -192,8 +194,6 @@ async def send_media_group(chat_id, context, items, caption):
             await asyncio.sleep(2)
 
 
-# ==================== بقیه توابع قبلی ====================
-
 async def show_settings_menu(update: Update, context, query=None):
     user_id = update.effective_user.id
     current_mode = get_user_default_mode(user_id)
@@ -205,11 +205,11 @@ async def show_settings_menu(update: Update, context, query=None):
     if query:
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=keyboard)
     else:
-        await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+        await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
 
 
 async def help_command(update: Update, context):
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "📖 <b>راهنما</b>\n\n"
         "• لینک پست/ریلز/استوری بفرست\n"
         "• /profile username → پروفایل\n"
@@ -228,15 +228,15 @@ async def handle_link(update: Update, context):
     user_id = update.effective_user.id
 
     if "instagram.com" not in url:
-        await update.message.reply_text("❌ فقط لینک اینستاگرام قبول میکنم!")
+        await update.effective_message.reply_text("❌ فقط لینک اینستاگرام قبول میکنم!")
         return
 
     limited, wait = is_rate_limited(user_id)
     if limited:
-        await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
+        await update.effective_message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
         return
 
-    processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
+    processing_msg = await update.effective_message.reply_text("🔄 در حال پردازش...")
 
     try:
         result = await get_instagram_media(url)
