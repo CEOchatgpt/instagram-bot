@@ -253,7 +253,6 @@ async def get_instagram_story(username: str, story_id: str = None):
         logger.error(f"Error getting story: {e}")
         return None
 
-
 async def get_user_reels_v2(username: str):
     """دریافت ریل‌ها از endpoint posts - نسخه اصلی و پایدار"""
     headers = {
@@ -269,7 +268,7 @@ async def get_user_reels_v2(username: str):
             
             logger.info(f"V2: Fetching posts for {username}")
             
-            async with session.post(url, json=payload, headers=headers, timeout=25) as resp:
+            async with session.post(url, json=payload, headers=headers, timeout=30) as resp:
                 data = await resp.json()
                 result = data.get("result") or data
                 
@@ -288,6 +287,9 @@ async def get_user_reels_v2(username: str):
                     posts_list = result
                 
                 logger.info(f"V2: Found {len(posts_list)} posts for {username}")
+                
+                if not posts_list:
+                    return None
                 
                 for post in posts_list:
                     if not isinstance(post, dict):
@@ -330,9 +332,12 @@ async def get_user_reels_v2(username: str):
                     "username": username
                 } if items else None
                 
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout error for {username}")
+        return None
     except Exception as e:
-        logger.error(f"Error in get_user_reels_v2: {e}")
+        logger.error(f"Error in get_user_reels_v2 for {username}: {e}")
         return None
 
 
-# حذف توابع get_user_reels و get_user_reels_direct (غیرضروری)
+
