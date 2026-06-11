@@ -1,8 +1,9 @@
-# rapidapi_service.py - نسخه اصلاح شده کامل
+# rapidapi_service.py - نسخه دیباگ کامل
 
 import re
 import aiohttp
 import asyncio
+import json
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 
 MAX_RETRIES = 3
@@ -10,7 +11,6 @@ RETRY_DELAY = 1
 
 
 def format_caption(raw: str) -> str:
-    """تمیز کردن کپشن اینستاگرام"""
     text = re.sub(r'https?://\S+', '', raw)
     hashtags = re.findall(r'#\w+', text)
     text = re.sub(r'#\w+', '', text)
@@ -28,8 +28,6 @@ def format_caption(raw: str) -> str:
 
 
 async def get_instagram_media(post_url: str) -> dict | None:
-    """دریافت مدیاهای اینستاگرام از API"""
-    
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -54,7 +52,7 @@ async def get_instagram_media(post_url: str) -> dict | None:
 
         except aiohttp.ClientResponseError as e:
             if e.status < 500:
-                print(f"❌ HTTP {e.status} از RapidAPI")
+                print(f"❌ HTTP {e.status}")
                 return None
             print(f"⚠️ HTTP {e.status} — تلاش {attempt}/{MAX_RETRIES}")
 
@@ -75,57 +73,55 @@ async def get_instagram_media(post_url: str) -> dict | None:
     if not isinstance(data, list) or not data:
         return None
 
-    # دریافت کپشن
+    # ========== دیباگ: چاپ کامل پاسخ برای یک پست کاروسل ==========
+    print("\n" + "="*60)
+    print("📦 پاسخ کامل API (برای کاروسل):")
+    print("="*60)
+    # فقط 3000 کاراکتر اول رو چاپ میکنیم تا خیلی طولانی نشه
+    print(json.dumps(data, indent=2, ensure_ascii=False)[:3000])
+    print("="*60 + "\n")
+    # ============================================================
+
     raw_caption = data[0].get("meta", {}).get("title", "")
     caption = format_caption(raw_caption)
 
     items = []
 
-    for item in data:
-        # روش اول: بررسی نوع مستقیم از فیلدهای API
-        media_type = item.get("media_type") or item.get("type") or item.get("__typename", "")
+    for idx, item in enumerate(data):
+        print(f"\n--- آیتم {idx + 1} ---")
+        print(f"کلیدهای موجود: {list(item.keys())}")
         
-        # تبدیل به string برای مقایسه راحت
-        media_type_str = str(media_type).lower()
+        # چاپ همه فیلدهای مهم
+        if "pictureUrl" in item:
+            print(f"pictureUrl: {item['pictureUrl'][:100]}...")
+        if "urls" in item:
+            print(f"urls: {item['urls']}")
+        if "media_type" in item:
+            print(f"media_type: {item['media_type']}")
+        if "type" in item:
+            print(f"type: {item['type']}")
+        if "__typename" in item:
+            print(f"__typename: {item['__typename']}")
         
-        # چک کردن ویدیو
-        is_video = False
-        is_photo = False
-        
-        # بررسی بر اساس media_type
-        if media_type_str in ["video", "graphvideo", "2"]:
-            is_video = True
-        elif media_type_str in ["image", "graphimage", "1"]:
-            is_photo = True
-        
-        # اگر media_type مشخص نبود، بر اساس وجود urls یا pictureUrl تشخیص بده
         urls = item.get("urls", [])
         picture_url = item.get("pictureUrl")
         
-        if not is_video and not is_photo:
-            if urls:
-                is_video = True
-            elif picture_url:
-                is_photo = True
-        
-        # اضافه کردن به لیست items
-        if is_video and urls:
-            # انتخاب بهترین کیفیت ویدیو
+        # تشخیص بر اساس فیلدهای موجود
+        if urls:
             best = max(urls, key=lambda x: x.get("quality", 0))
             items.append({"type": "video", "url": best["url"]})
-            print(f"✅ ویدیو اضافه شد - کیفیت: {best.get('quality', 'unknown')}")
-            
-        elif is_photo and picture_url:
+            print("✅ تشخیص: ویدیو (بر اساس urls)")
+        elif picture_url:
+            # اینجا باید بررسی کنیم که picture_url واقعاً به عکس اشاره داره یا ویدیو
+            # بعضی APIها برای ویدیو هم pictureUrl می‌دهند (thumbnail)
             items.append({"type": "photo", "url": picture_url})
-            print(f"✅ عکس اضافه شد")
-            
+            print("✅ تشخیص: عکس (بر اساس pictureUrl)")
         else:
-            print(f"⚠️ آیتم ناشناس: {list(item.keys())}")
+            print("⚠️ هیچ مدیایی پیدا نشد")
 
-    # دیباگ: نمایش نتیجه نهایی
     print(f"\n📊 نتیجه نهایی: {len(items)} مدیا")
     for i, item in enumerate(items):
         print(f"  - {i+1}: {item['type']}")
-    print("=" * 50)
+    print("="*60)
 
     return {"caption": caption, "items": items} if items else None
