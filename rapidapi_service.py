@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه اصلاح شده
+# rapidapi_service.py - نسخه نهایی با رفع مشکلات کپشن و لینک
 
 import re
 import aiohttp
@@ -13,24 +13,65 @@ MAX_RETRIES = 3
 RETRY_DELAY = 1
 
 
-def format_caption(raw: str) -> str:
+def extract_caption_text(caption_field):
+    """
+    استخراج متن کپشن از ساختارهای مختلف
+    ممکن است کپشن به صورت:
+    - string ساده
+    - دیکشنری با کلید text
+    - دیکشنری با کلید های دیگر
+    """
+    if not caption_field:
+        return ""
+    
+    if isinstance(caption_field, str):
+        return caption_field
+    
+    if isinstance(caption_field, dict):
+        # اولویت با کلید text
+        if "text" in caption_field:
+            return caption_field["text"]
+        # سپس کلید caption
+        if "caption" in caption_field:
+            return extract_caption_text(caption_field["caption"])
+        # هر کلید دیگری که ممکنه متن باشه
+        for key in ["content", "body", "description", "title"]:
+            if key in caption_field:
+                return str(caption_field[key])
+        # اگر هیچکدام نبود، دیکشنری رو به رشته تبدیل نکن!
+        return ""
+    
+    return str(caption_field) if caption_field else ""
+
+
+def format_caption(raw) -> str:
     """فرمت کردن کپشن"""
-    if not raw:
+    # استخراج متن از هر ساختاری که هست
+    text = extract_caption_text(raw)
+    
+    if not text:
         return "بدون کپشن"
-    text = re.sub(r'https?://\S+', '', raw)
-    hashtags = re.findall(r'#\\w+', text)
-    text = re.sub(r'#\\w+', '', text)
+    
+    # حذف لینک‌ها
+    text = re.sub(r'https?://\S+', '', text)
+    
+    # استخراج هشتگ‌ها
+    hashtags = re.findall(r'#\w+', text)
+    text = re.sub(r'#\w+', '', text)
+    
     text = text.strip()
     if not text:
         text = "بدون کپشن"
-    hashtag_line = " ".join(hashtags)
-    caption = "✅\n\n" + text
-    if hashtag_line:
-        caption += f"\n\n{hashtag_line}"
-    if len(caption) > 1024:
-        cut = caption[:1020].rsplit(" ", 1)[0]
-        caption = cut + " ..."
-    return caption
+    
+    # اضافه کردن هشتگ‌ها در انتها
+    if hashtags:
+        hashtag_line = " ".join(hashtags)
+        text = text + "\n\n" + hashtag_line
+    
+    if len(text) > 1024:
+        text = text[:1020].rsplit(" ", 1)[0] + " ..."
+    
+    return text
 
 
 async def get_instagram_profile(username: str):
@@ -213,184 +254,8 @@ async def get_instagram_story(username: str, story_id: str = None):
         return None
 
 
-async def get_user_reels(username: str, max_id: str = ""):
-    """
-    دریافت لیست ریل‌های یک کاربر
-    پشتیبانی از ساختارهای مختلف پاسخ API
-    """
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": RAPIDAPI_HOST,
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://{RAPIDAPI_HOST}/api/instagram/reels"
-            payload = {"username": username, "maxId": max_id}
-            
-            logger.info(f"Fetching reels for {username} with max_id: {max_id}")
-            
-            async with session.post(url, json=payload, headers=headers, timeout=25) as resp:
-                data = await resp.json()
-                
-                logger.info(f"Reels API response status: {resp.status}")
-                
-                result = data.get("result") or data
-                
-                if not result:
-                    logger.warning(f"No result for {username}")
-                    return None
-                
-                items = []
-                
-                # ============================================
-                # پشتیبانی از ساختارهای مختلف پاسخ
-                # ============================================
-                
-                reel_list = []
-                
-                if isinstance(result, dict):
-                    # ساختار 1: {'edges': [...], 'page_info': {...}}
-                    if "edges" in result:
-                        for edge in result["edges"]:
-                            if "node" in edge:
-                                reel_list.append(edge["node"])
-                            else:
-                                reel_list.append(edge)
-                    
-                    # ساختار 2: {'reels': [...]}
-                    elif "reels" in result:
-                        reel_list = result["reels"]
-                    
-                    # ساختار 3: {'items': [...]}
-                    elif "items" in result:
-                        reel_list = result["items"]
-                    
-                    # ساختار 4: {'media': [...]}
-                    elif "media" in result:
-                        reel_list = result["media"]
-                    
-                    # ساختار 5: {'data': {'user': {'edge_owner_to_timeline_media': {'edges': [...]}}}}
-                    elif "data" in result:
-                        data_obj = result.get("data", {})
-                        user_obj = data_obj.get("user", {})
-                        media_obj = user_obj.get("edge_owner_to_timeline_media", {})
-                        edges = media_obj.get("edges", [])
-                        for edge in edges:
-                            if "node" in edge:
-                                reel_list.append(edge["node"])
-                    
-                    # ساختار 6: اگر خود result یک لیست نبود ولی داخلش کلید دیگه‌ای داشت
-                    else:
-                        # چک کردن تمام مقادیر برای پیدا کردن لیست
-                        for key, value in result.items():
-                            if isinstance(value, list) and len(value) > 0:
-                                if isinstance(value[0], dict):
-                                    reel_list = value
-                                    logger.info(f"Found reels in key: {key}")
-                                    break
-                
-                elif isinstance(result, list):
-                    reel_list = result
-                
-                if not reel_list:
-                    logger.warning(f"No reels list found for {username}")
-                    logger.info(f"Result structure: {list(result.keys()) if isinstance(result, dict) else type(result)}")
-                    
-                    # لاگ کامل برای دیباگ (فقط 500 کاراکتر اول)
-                    logger.debug(f"Full result: {json.dumps(result, ensure_ascii=False)[:500]}")
-                    return None
-                
-                logger.info(f"Processing {len(reel_list)} potential reels for {username}")
-                
-                for reel in reel_list:
-                    if not isinstance(reel, dict):
-                        continue
-                    
-                    # بررسی اگر ویدیو/ریل است
-                    media_type = reel.get("media_type", 0)
-                    is_video = reel.get("is_video", False) or media_type == 2
-                    
-                    # اگر ویدیو نیست، رد کن (فقط ریل‌ها)
-                    if not is_video:
-                        # چک کردن اگر video_url مستقیم داره
-                        if not reel.get("video_url") and not reel.get("video_versions"):
-                            continue
-                    
-                    video_url = None
-                    
-                    # روش‌های مختلف دریافت ویدیو
-                    video_versions = reel.get("video_versions")
-                    if video_versions and isinstance(video_versions, list) and video_versions:
-                        best = max(video_versions, key=lambda x: x.get("height", 0) or x.get("width", 0))
-                        video_url = best.get("url")
-                    
-                    if not video_url:
-                        video_url = reel.get("video_url")
-                    
-                    if not video_url:
-                        clips = reel.get("clips", [])
-                        if clips and isinstance(clips, list) and clips:
-                            video_url = clips[0].get("url")
-                    
-                    if not video_url:
-                        continue
-                    
-                    # در تابع get_user_reels، جایی که کپشن رو استخراج می‌کنید، این قسمت رو اصلاح کنید:
-
-                    # استخراج کپشن - اصلاح شده
-                    caption = reel.get("caption", "")
-                    if isinstance(caption, dict):
-                        caption = caption.get("text", "")
-                    if not caption:
-                        caption = reel.get("title", "")
-                    if isinstance(caption, dict):
-                        caption = caption.get("text", "")
-                    if not caption:
-                        caption = reel.get("text", "")
-                    if isinstance(caption, dict):
-                        caption = caption.get("text", "")
-                    if not caption:
-                        caption = "بدون کپشن"
-                    
-                    # استخراج آیدی
-                    reel_id = reel.get("id") or reel.get("pk") or reel.get("code") or ""
-                    
-                    items.append({
-                        "id": reel_id,
-                        "url": video_url,
-                        "caption": caption[:200] if caption else "بدون کپشن",
-                        "thumbnail": reel.get("thumbnail_url") or reel.get("cover_url") or "",
-                        "like_count": reel.get("like_count", 0),
-                        "comment_count": reel.get("comment_count", 0),
-                        "play_count": reel.get("play_count", 0),
-                    })
-                
-                # گرفتن next_max_id برای صفحه‌بندی
-                next_max_id = ""
-                if isinstance(result, dict):
-                    page_info = result.get("page_info", {})
-                    if page_info:
-                        next_max_id = page_info.get("end_cursor", "")
-                    else:
-                        next_max_id = result.get("next_max_id") or result.get("max_id") or ""
-                
-                logger.info(f"Found {len(items)} reels for {username}")
-                
-                return {
-                    "items": items,
-                    "next_max_id": next_max_id,
-                    "username": username
-                }
-                
-    except Exception as e:
-        logger.error(f"Error getting reels for {username}: {e}")
-        return None
-
-
 async def get_user_reels_v2(username: str):
-    """نسخه جایگزین برای دریافت ریل‌ها از endpoint posts"""
+    """دریافت ریل‌ها از endpoint posts - نسخه اصلی و پایدار"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -419,13 +284,6 @@ async def get_user_reels_v2(username: str):
                         for edge in result["edges"]:
                             if "node" in edge:
                                 posts_list.append(edge["node"])
-                    elif "data" in result:
-                        user_data = result.get("data", {}).get("user", {})
-                        media = user_data.get("edge_owner_to_timeline_media", {})
-                        edges = media.get("edges", [])
-                        for edge in edges:
-                            if "node" in edge:
-                                posts_list.append(edge["node"])
                 elif isinstance(result, list):
                     posts_list = result
                 
@@ -447,19 +305,10 @@ async def get_user_reels_v2(username: str):
                                 best = max(video_versions, key=lambda x: x.get("height", 0))
                                 video_url = best.get("url")
                         
-                        if video_url:
-                            # استخراج درست کپشن - مشکل اصلی اینجاست
+                        if video_url and video_url.startswith(('http://', 'https://')):
+                            # استخراج درست کپشن
                             raw_caption = post.get("caption", "")
-                            
-                            # اگر کپشن دیکشنری بود، متن رو استخراج کن
-                            if isinstance(raw_caption, dict):
-                                caption_text = raw_caption.get("text", "")
-                            else:
-                                caption_text = str(raw_caption) if raw_caption else ""
-                            
-                            # اگر باز هم دیکشنری بود (مثل {'has_translation': True, 'text': '...'})
-                            if isinstance(caption_text, dict):
-                                caption_text = caption_text.get("text", "")
+                            caption_text = extract_caption_text(raw_caption)
                             
                             if not caption_text:
                                 caption_text = "بدون کپشن"
@@ -479,59 +328,11 @@ async def get_user_reels_v2(username: str):
                     "items": items,
                     "next_max_id": "",
                     "username": username
-                }
+                } if items else None
+                
     except Exception as e:
         logger.error(f"Error in get_user_reels_v2: {e}")
         return None
 
-async def get_user_reels_direct(username: str):
-    """نسخه سوم - دریافت مستقیم با استفاده از endpoint profile"""
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": RAPIDAPI_HOST,
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://{RAPIDAPI_HOST}/api/instagram/profile"
-            payload = {"username": username}
-            
-            logger.info(f"Direct: Fetching profile for {username}")
-            
-            async with session.post(url, json=payload, headers=headers, timeout=25) as resp:
-                data = await resp.json()
-                result = data.get("result") or data
-                
-                items = []
-                
-                if isinstance(result, dict):
-                    recent_reels = result.get("recent_reels", [])
-                    if recent_reels:
-                        for reel in recent_reels:
-                            if isinstance(reel, dict):
-                                video_url = reel.get("video_url")
-                                if video_url:
-                                    items.append({
-                                        "id": reel.get("id", ""),
-                                        "url": video_url,
-                                        "caption": reel.get("caption", "بدون کپشن"),
-                                        "like_count": reel.get("like_count", 0),
-                                        "comment_count": reel.get("comment_count", 0),
-                                    })
-                
-                logger.info(f"Direct - Found {len(items)} reels for {username}")
-                
-                return {
-                    "items": items,
-                    "next_max_id": "",
-                    "username": username
-                } if items else None
-                
-    except Exception as e:
-        logger.error(f"Error in get_user_reels_direct: {e}")
-        return None
-        
-    except Exception as e:
-        logger.error(f"Error in get_user_reels_direct: {e}")
-        return None
+
+# حذف توابع get_user_reels و get_user_reels_direct (غیرضروری)
