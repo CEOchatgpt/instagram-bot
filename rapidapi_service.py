@@ -1,9 +1,8 @@
-# rapidapi_service.py - نسخه دیباگ کامل
+# rapidapi_service.py - نسخه نهایی و درست
 
 import re
 import aiohttp
 import asyncio
-import json
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 
 MAX_RETRIES = 3
@@ -73,55 +72,54 @@ async def get_instagram_media(post_url: str) -> dict | None:
     if not isinstance(data, list) or not data:
         return None
 
-    # ========== دیباگ: چاپ کامل پاسخ برای یک پست کاروسل ==========
-    print("\n" + "="*60)
-    print("📦 پاسخ کامل API (برای کاروسل):")
-    print("="*60)
-    # فقط 3000 کاراکتر اول رو چاپ میکنیم تا خیلی طولانی نشه
-    print(json.dumps(data, indent=2, ensure_ascii=False)[:3000])
-    print("="*60 + "\n")
-    # ============================================================
-
     raw_caption = data[0].get("meta", {}).get("title", "")
     caption = format_caption(raw_caption)
 
     items = []
 
-    for idx, item in enumerate(data):
-        print(f"\n--- آیتم {idx + 1} ---")
-        print(f"کلیدهای موجود: {list(item.keys())}")
-        
-        # چاپ همه فیلدهای مهم
-        if "pictureUrl" in item:
-            print(f"pictureUrl: {item['pictureUrl'][:100]}...")
-        if "urls" in item:
-            print(f"urls: {item['urls']}")
-        if "media_type" in item:
-            print(f"media_type: {item['media_type']}")
-        if "type" in item:
-            print(f"type: {item['type']}")
-        if "__typename" in item:
-            print(f"__typename: {item['__typename']}")
-        
+    for item in data:
         urls = item.get("urls", [])
-        picture_url = item.get("pictureUrl")
         
-        # تشخیص بر اساس فیلدهای موجود
+        # تشخیص نوع فایل از روی extension
+        is_video = False
+        is_photo = False
+        
+        if urls:
+            # نگاه کن ببین اولین url چه فرمتی داره
+            first_url = urls[0]
+            extension = first_url.get("extension", "").lower()
+            
+            if extension == "mp4":
+                is_video = True
+            elif extension in ["jpg", "jpeg", "png", "gif"]:
+                is_photo = True
+        
+        # اگه نتونستیم از روی extension تشخیص بدیم، از روی کیفیت تشخیص بده
+        if not is_video and not is_photo and urls:
+            # ویدیوها معمولاً کیفیت‌های 480, 720, 1080 دارن
+            # عکس‌ها کیفیت‌های 1080, 3024, 3088 دارن
+            quality = urls[0].get("quality", 0)
+            if quality <= 1080:
+                # احتمالاً ویدیو - ولی باز هم مطمئن نیستیم
+                # از روی name هم چک کن
+                name = urls[0].get("name", "").upper()
+                if name == "MP4":
+                    is_video = True
+                else:
+                    is_photo = True
+            else:
+                is_photo = True
+        
+        # انتخاب بهترین کیفیت
         if urls:
             best = max(urls, key=lambda x: x.get("quality", 0))
-            items.append({"type": "video", "url": best["url"]})
-            print("✅ تشخیص: ویدیو (بر اساس urls)")
-        elif picture_url:
-            # اینجا باید بررسی کنیم که picture_url واقعاً به عکس اشاره داره یا ویدیو
-            # بعضی APIها برای ویدیو هم pictureUrl می‌دهند (thumbnail)
-            items.append({"type": "photo", "url": picture_url})
-            print("✅ تشخیص: عکس (بر اساس pictureUrl)")
+            if is_video:
+                items.append({"type": "video", "url": best["url"]})
+                print(f"✅ ویدیو - کیفیت: {best.get('quality')}")
+            else:
+                items.append({"type": "photo", "url": best["url"]})
+                print(f"✅ عکس - کیفیت: {best.get('quality')}")
         else:
-            print("⚠️ هیچ مدیایی پیدا نشد")
-
-    print(f"\n📊 نتیجه نهایی: {len(items)} مدیا")
-    for i, item in enumerate(items):
-        print(f"  - {i+1}: {item['type']}")
-    print("="*60)
+            print(f"⚠️ آیتم بدون urls")
 
     return {"caption": caption, "items": items} if items else None
