@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه بهبود یافته برای استوری
+# rapidapi_service.py - نسخه نهایی و درست شده برای استوری
 
 import re
 import aiohttp
@@ -28,7 +28,7 @@ def format_caption(raw: str) -> str:
 
 
 async def get_instagram_story(username: str, story_id: str = None):
-    """دریافت استوری با پرینت کامل برای دیباگ"""
+    """دریافت استوری"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -49,62 +49,54 @@ async def get_instagram_story(username: str, story_id: str = None):
                 data = await resp.json()
 
                 print(f"\n🔍 پاسخ کامل API استوری برای @{username}:")
-                print(json.dumps(data, indent=2, ensure_ascii=False)[:2000])  # ۲۰۰۰ کاراکتر اول
+                print(json.dumps(data, indent=2, ensure_ascii=False)[:2500])
 
                 items = []
 
-                # تلاش برای پیدا کردن لینک‌ها در ساختارهای مختلف
-                if isinstance(data, dict):
-                    # مسیرهای رایج
-                    candidates = [
-                        data.get("items"),
-                        data.get("stories"),
-                        data.get("story"),
-                        data.get("data"),
-                        [data]  # اگر خودش یک آیتم باشه
-                    ]
-
-                    for candidate in candidates:
-                        if not candidate:
+                # ساختار جدید API: data["result"]
+                stories = data.get("result") if isinstance(data, dict) else None
+                
+                if isinstance(stories, list):
+                    for story in stories:
+                        if not isinstance(story, dict):
                             continue
-                        if not isinstance(candidate, list):
-                            candidate = [candidate]
 
-                        for item in candidate:
-                            if not isinstance(item, dict):
-                                continue
+                        # استخراج عکس (رایج‌ترین نوع استوری)
+                        image_versions = story.get("image_versions2", {}).get("candidates", [])
+                        if image_versions:
+                            # بهترین کیفیت (اولین آیتم معمولاً بهترینه)
+                            best_image = max(image_versions, key=lambda x: x.get("height", 0))
+                            items.append({
+                                "type": "photo",
+                                "url": best_image.get("url")
+                            })
+                            continue
 
-                            # پیدا کردن ویدیو
-                            video_url = None
-                            if item.get("video_url"):
-                                video_url = item.get("video_url")
-                            elif item.get("video_versions"):
-                                video_url = item.get("video_versions", [{}])[0].get("url")
-                            elif item.get("video"):
-                                video_url = item.get("video")
-
-                            if video_url:
-                                items.append({"type": "video", "url": video_url})
-                                continue
-
-                            # پیدا کردن عکس
-                            image_url = None
-                            if item.get("image_url"):
-                                image_url = item.get("image_url")
-                            elif item.get("image_versions"):
-                                image_url = item.get("image_versions", [{}])[0].get("url")
-                            elif item.get("image"):
-                                image_url = item.get("image")
-
-                            if image_url:
-                                items.append({"type": "photo", "url": image_url})
+                        # اگر ویدیو هم بود (برای آینده)
+                        video_versions = story.get("video_versions") or story.get("video")
+                        if video_versions:
+                            if isinstance(video_versions, list):
+                                best_video = max(video_versions, key=lambda x: x.get("height", 0))
+                                items.append({
+                                    "type": "video",
+                                    "url": best_video.get("url")
+                                })
+                            else:
+                                items.append({"type": "video", "url": video_versions})
 
                 if items:
-                    print(f"✅ {len(items)} آیتم استوری پیدا شد")
-                    return {"caption": f"📖 استوری @{username}", "items": items}
+                    print(f"✅ {len(items)} آیتم استوری با موفقیت استخراج شد")
+                    return {
+                        "caption": f"📖 استوری @{username}",
+                        "items": items
+                    }
                 else:
-                    print("⚠️ هیچ آیتمی پیدا نشد - داده خام برگردانده می‌شود")
-                    return {"caption": f"📖 استوری @{username}", "items": [], "raw": data}
+                    print("⚠️ هیچ آیتمی پیدا نشد")
+                    return {
+                        "caption": f"📖 استوری @{username} (داده خام)",
+                        "items": [],
+                        "raw": data
+                    }
 
     except Exception as e:
         print(f"❌ خطا در دریافت استوری: {e}")
@@ -112,6 +104,7 @@ async def get_instagram_story(username: str, story_id: str = None):
 
 
 async def get_instagram_media(post_url: str) -> dict | None:
+    """تابع اصلی"""
     if not post_url or "instagram.com" not in post_url:
         return None
 
@@ -123,7 +116,7 @@ async def get_instagram_media(post_url: str) -> dict | None:
         print(f"📖 لینک استوری تشخیص داده شد → @{username} (ID: {story_id})")
         return await get_instagram_story(username, story_id)
 
-    # === بخش پست/ریلز قبلی (بدون تغییر) ===
+    # === بخش پست/ریلز (بدون تغییر) ===
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
