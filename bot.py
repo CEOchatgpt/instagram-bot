@@ -130,28 +130,37 @@ async def highlights_command(update: Update, context):
             if not isinstance(h, dict):
                 continue
                 
-            # استخراج شناسه هایلایت
+            # استخراج شناسه هایلایت و تمیز کردن آن
             hl_id = h.get("id") or h.get("highlight_id") or h.get("pk")
             if not hl_id:
                 continue
+            
+            # اگر شناسه شامل "highlight:" بود، فقط بخش عددی را نگه دار
+            raw_id = str(hl_id)
+            if ":" in raw_id:
+                clean_id = raw_id.split(":")[-1]
+                logger.info(f"Cleaned highlight ID: {raw_id} -> {clean_id}")
+            else:
+                clean_id = raw_id
 
             title = h.get("title", "هایلایت")
             # حذف کاراکترهای خاص از عنوان
             clean_title = title.replace(":", "").replace("\n", "").strip()
             count = h.get("count") or h.get("media_count") or 0
             
-            # ایجاد یک شناسه یکتا برای دکمه (با استفاده از ایندکس)
+            # ایجاد یک شناسه یکتا برای دکمه
             button_id = f"hl_{i}"
             
-            # ذخیره اطلاعات کامل
+            # ذخیره اطلاعات کامل (با شناسه تمیز شده)
             context.user_data['current_highlights'].append({
-                "id": str(hl_id),
+                "id": clean_id,  # ذخیره شناسه تمیز شده
+                "original_id": raw_id,  # ذخیره شناسه اصلی برای دیباگ
                 "title": clean_title,
                 "username": username
             })
             
             button_text = f"📚 {clean_title}"
-            if count and count > 0:
+            if count and int(count) > 0:
                 button_text = f"📚 {clean_title} ({count})"
             
             keyboard.append([InlineKeyboardButton(button_text, callback_data=button_id)])
@@ -168,7 +177,6 @@ async def highlights_command(update: Update, context):
     except Exception as e:
         logger.error(f"Error in highlights_command: {e}")
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
-
 
 async def handle_highlight_callback(update: Update, context):
     """پردازش کلیک روی دکمه هایلایت"""
