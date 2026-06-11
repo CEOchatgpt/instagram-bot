@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from rapidapi_service import get_instagram_media
+from rapidapi_service import get_instagram_media, get_instagram_profile
 from user_settings import get_user_default_mode, set_user_default_mode, get_user_settings_keyboard
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -284,7 +284,54 @@ async def handle_format_choice(update: Update, context):
         await query.answer("✅ حالت فایل فعال شد!")
         await show_settings_menu(update, context, query)
         return
+        
+async def profile_command(update: Update, context):
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ نحوه استفاده:\n"
+            "/profile username\n\n"
+            "مثال: `/profile cristiano`",
+            parse_mode='HTML'
+        )
+        return
 
+    username = context.args[0].strip("@").strip()
+    processing_msg = await update.message.reply_text(f"📊 در حال دریافت پروفایل @{username}...")
+
+    try:
+        profile = await get_instagram_profile(username)
+        if not profile:
+            await processing_msg.edit_text("❌ نتونستم پروفایل رو پیدا کنم.")
+            return
+
+        caption = (
+            f"👤 <b>{profile['full_name']}</b>\n"
+            f"🔖 @{profile['username']}\n\n"
+            f"📝 {profile['biography'][:280]}{'...' if len(profile['biography']) > 280 else ''}\n\n"
+            f"❤️ {profile['followers']:,} دنبال‌کننده\n"
+            f"👥 {profile['following']:,} دنبال‌شونده\n"
+            f"📸 {profile['posts']:,} پست\n"
+            f"{'✅ تایید شده' if profile['is_verified'] else ''}\n"
+        )
+
+        if profile.get("external_url"):
+            caption += f"\n🔗 {profile['external_url']}"
+
+        if profile.get("profile_pic"):
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=profile["profile_pic"],
+                caption=caption,
+                parse_mode='HTML'
+            )
+        else:
+            await processing_msg.edit_text(caption, parse_mode='HTML')
+
+        await processing_msg.delete()
+
+    except Exception as e:
+        logger.error(f"Profile error: {e}")
+        await processing_msg.edit_text(f"❌ خطا در دریافت پروفایل: {str(e)[:100]}")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -292,9 +339,10 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("settings", settings_command))
+    app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
     app.add_handler(CallbackQueryHandler(handle_format_choice))
-
+    
     print("🤖 ربات در حال اجراست...")
     app.run_polling()
 
