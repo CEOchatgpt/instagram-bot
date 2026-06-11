@@ -188,7 +188,7 @@ async def handle_link(update: Update, context):
         # ========== عکس تک ==========
     
         if is_single and has_photo:
-        default_mode = get_user_default_mode(user_id)
+            default_mode = get_user_default_mode(user_id)
         
         if default_mode == "file":
             # مستقیم فایل بفرست
