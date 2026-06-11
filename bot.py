@@ -142,87 +142,79 @@ async def handle_link(update: Update, context):
         await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
         return
 
-    processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
+    # تشخیص استوری برای پیام پردازش
+    if "/stories/" in url:
+        processing_msg = await update.message.reply_text("📖 در حال دریافت استوری...")
+    else:
+        processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
 
     try:
         result = await get_instagram_media(url)
-        if not result or not result.get("items"):
+        if not result or (not result.get("items") and not result.get("raw")):
             await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم.")
             return
 
         context.user_data["pending_result"] = result
         await processing_msg.delete()
 
-        items = result["items"]
+        items = result.get("items", [])
+        caption = result.get("caption", "دانلود از اینستاگرام")
+
+        # اگر استوری با داده خام بود
+        if not items and result.get("raw"):
+            await update.message.reply_text("⚠️ استوری دریافت شد اما ساختار جدیده.\n" + str(result["raw"])[:400])
+            context.user_data.pop("pending_result", None)
+            return
+
         has_video = any(item["type"] == "video" for item in items)
         has_photo = any(item["type"] == "photo" for item in items)
         is_single = len(items) == 1
         default_mode = get_user_default_mode(user_id)
-        
+
         print(f"🔍 کاربر {user_id} - حالت: {default_mode} - تعداد: {len(items)} - ویدیو: {has_video} - عکس: {has_photo}")
 
         # ========== ویدیو تک ==========
         if is_single and has_video:
-            print(f"🎥 ویدیو تکی شناسایی شد - حالت: {default_mode}")
             if default_mode == "file":
-                print("📁 ارسال ویدیو به صورت فایل (Document)")
-                try:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ارسال ویدیو به صورت فایل...")
-                    await context.bot.send_document(
-                        chat_id=update.effective_chat.id,
-                        document=items[0]["url"],
-                        caption=result.get("caption", "")
-                    )
-                    print("✅ ویدیو بصورت فایل ارسال شد")
-                except Exception as e:
-                    print(f"⚠️ خطا در ارسال فایل: {e}")
-                    logger.error(f"Error sending video as document: {e}")
-                    raise
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=items[0]["url"],
+                    caption=caption
+                )
             else:
-                print("🎬 ارسال ویدیو به صورت قابل پخش (Video)")
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 در حال ارسال ویدیو...")
                 await context.bot.send_video(
                     chat_id=update.effective_chat.id,
                     video=items[0]["url"],
                     supports_streaming=True,
-                    caption=result.get("caption", "")
+                    caption=caption
                 )
-            
-            context.user_data.pop("pending_result", None)
             await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
+            context.user_data.pop("pending_result", None)
             return
 
         # ========== عکس تک ==========
         if is_single and has_photo:
-            print(f"📸 عکس تکی شناسایی شد - حالت: {default_mode}")
             if default_mode == "file":
-                print("📁 ارسال عکس به صورت فایل (Document)")
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="📸 ارسال عکس به صورت فایل...")
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=items[0]["url"],
-                    caption=result.get("caption", "")
+                    caption=caption
                 )
             else:
-                print("🖼 ارسال عکس به صورت معمولی (Photo) - بدون منوی انتخاب")
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="📸 ارسال عکس...")
                 await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     photo=items[0]["url"],
-                    caption=result.get("caption", "")
+                    caption=caption
                 )
-            
-            context.user_data.pop("pending_result", None)
             await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
+            context.user_data.pop("pending_result", None)
             return
 
-        # ========== کاروسل ==========
+        # ========== کاروسل / چند استوری ==========
         if default_mode == "album":
-            print("🎬 ارسال کاروسل به صورت آلبوم ترکیبی")
-            await send_media_group(update.effective_chat.id, context, items, result.get("caption", ""))
+            await send_media_group(update.effective_chat.id, context, items, caption)
         else:
-            print("📁 ارسال کاروسل به صورت فایل")
-            await send_as_files(update.effective_chat.id, context, items, result.get("caption", ""))
+            await send_as_files(update.effective_chat.id, context, items, caption)
         
         context.user_data.pop("pending_result", None)
         await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
