@@ -76,54 +76,131 @@ async def get_instagram_highlights(username: str):
         return []
 
 
-async def get_instagram_highlight_stories(highlight_id: str, title: str = "Highlight"):
-    """دریافت استوری‌های داخل یک هایلایت بر اساس ID"""
+# تابع get_instagram_highlight_stories را با این نسخه جایگزین کنید
+
+async def get_instagram_highlight_stories(highlight_id: str, username: str = None, title: str = "Highlight"):
+    """دریافت استوری‌های داخل یک هایلایت بر اساس ID و username"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
         "Content-Type": "application/json"
     }
     
-    # اطمینان از اینکه شناسه فقط بخش عددی یا ساختار درست است
-    hl_clean = highlight_id.split(":")[-1] if ":" in highlight_id else highlight_id
-    
-    # آدرس اندپوینت دریافت استوری‌های هایلایت بر اساس ID
+    # روش اول: تلاش با highlightId
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/highlightStories"
     
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             async with aiohttp.ClientSession() as session:
-                # ارسال پارامتر به صورت کوئری یا بادی بر اساس مستندات سرویس شما
-                async with session.get(api_url, params={"highlightId": hl_clean}, headers=headers, timeout=15) as response:
+                # تلاش با پارامتر highlightId
+                async with session.get(api_url, params={"highlightId": str(highlight_id)}, headers=headers, timeout=15) as response:
                     if response.status == 200:
                         data = await response.json()
                         
-                        # استخراج آیتم‌ها بر اساس پاسخ ساختار سرویس instagram120
-                        items_list = []
-                        raw_items = data.get("result") or data.get("items") or []
+                        # بررسی ساختارهای مختلف پاسخ
+                        result = data.get("result") or data.get("data") or data
                         
-                        for item in raw_items:
-                            urls = item.get("urls", [])
-                            if not urls:
-                                continue
-                            best_url = max(urls, key=lambda x: x.get("quality", 0)).get("url")
-                            is_video = urls[0].get("extension") == "mp4" or "mp4" in best_url
-                            
-                            items_list.append({
-                                "type": "video" if is_video else "photo",
-                                "url": best_url
-                            })
-                            
+                        # اگر result یک دیکشنری با کلید items یا stories داشت
+                        items_list = []
+                        if isinstance(result, dict):
+                            items_list = result.get("items") or result.get("stories") or result.get("media") or []
+                        elif isinstance(result, list):
+                            items_list = result
+                        
                         if items_list:
-                            return {"items": items_list, "caption": f"📚 هایلایت: {title}"}
-            break
+                            formatted_items = []
+                            for item in items_list:
+                                if not isinstance(item, dict):
+                                    continue
+                                    
+                                # پیدا کردن URL رسانه
+                                video_url = None
+                                photo_url = None
+                                
+                                # چک کردن ویدیو
+                                if item.get("video_url"):
+                                    video_url = item.get("video_url")
+                                elif item.get("video_versions") and isinstance(item.get("video_versions"), list):
+                                    video_url = item.get("video_versions")[0].get("url")
+                                
+                                # چک کردن تصویر
+                                if not video_url:
+                                    if item.get("image_url"):
+                                        photo_url = item.get("image_url")
+                                    elif item.get("image_versions2", {}).get("candidates"):
+                                        candidates = item.get("image_versions2", {}).get("candidates", [])
+                                        if candidates:
+                                            photo_url = max(candidates, key=lambda x: x.get("height", 0)).get("url")
+                                    elif item.get("display_url"):
+                                        photo_url = item.get("display_url")
+                                
+                                if video_url:
+                                    formatted_items.append({"type": "video", "url": video_url})
+                                elif photo_url:
+                                    formatted_items.append({"type": "photo", "url": photo_url})
+                            
+                            if formatted_items:
+                                return {"items": formatted_items, "caption": f"📚 هایلایت: {title}"}
+            
+            # اگر روش اول جواب نداد و username داریم، روش دوم را امتحان کن
+            if username and not formatted_items:
+                return await get_instagram_highlight_stories_via_username(username, highlight_id, title)
+                
         except Exception as e:
+            logger.error(f"Error in highlight stories (attempt {attempt}): {e}")
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(RETRY_DELAY * attempt)
-                
+    
     return None
 
 
+async def get_instagram_highlight_stories_via_username(username: str, highlight_id: str, title: str):
+    """روش جایگزین: دریافت استوری‌های هایلایت از طریق username و highlight_id"""
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST,
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            # استفاده از اندپوینت stories با highlightId
+            url = f"https://{RAPIDAPI_HOST}/api/instagram/stories"
+            payload = {"username": username, "highlight_id": highlight_id}
+            
+            async with session.post(url, json=payload, headers=headers, timeout=15) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    result = data.get("result") or data.get("data") or data
+                    
+                    items_list = []
+                    if isinstance(result, dict):
+                        items_list = result.get("items") or result.get("stories") or []
+                    elif isinstance(result, list):
+                        items_list = result
+                    
+                    if items_list:
+                        formatted_items = []
+                        for item in items_list:
+                            if not isinstance(item, dict):
+                                continue
+                            
+                            # پیدا کردن URL
+                            video_url = item.get("video_url") or (item.get("video_versions", [{}])[0].get("url") if item.get("video_versions") else None)
+                            photo_url = item.get("image_url") or (item.get("image_versions2", {}).get("candidates", [{}])[0].get("url") if item.get("image_versions2") else None)
+                            
+                            if video_url:
+                                formatted_items.append({"type": "video", "url": video_url})
+                            elif photo_url:
+                                formatted_items.append({"type": "photo", "url": photo_url})
+                        
+                        if formatted_items:
+                            return {"items": formatted_items, "caption": f"📚 هایلایت: {title}"}
+    except Exception as e:
+        logger.error(f"Error in highlight stories via username: {e}")
+    
+    return None
+    
 async def get_instagram_story(username: str, story_id: str = None):
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST, "Content-Type": "application/json"}
     try:
