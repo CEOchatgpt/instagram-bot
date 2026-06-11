@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی با پشتیبانی از حالت فایل برای ویدیوهای تکی
+# bot.py - نسخه نهایی با تست مستقیم
 
 import aiohttp
 from io import BytesIO
@@ -21,7 +21,7 @@ from user_settings import get_user_default_mode, set_user_default_mode, get_user
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-RATE_LIMIT = 20
+RATE_LIMIT = 3
 WINDOW_SECS = 60
 user_requests: dict[int, list[float]] = defaultdict(list)
 
@@ -55,18 +55,16 @@ async def start(update: Update, context):
 
 
 async def show_settings_menu(update: Update, context, query=None):
-    """نمایش منوی تنظیمات"""
     user_id = update.effective_user.id
     current_mode = get_user_default_mode(user_id)
     
-    mode_text = "🎬 آلبوم ترکیبی (عکس+ویدیو)" if current_mode == "album" else "📁 فایل (همه چیز به صورت فایل)"
+    mode_text = "🎬 آلبوم ترکیبی" if current_mode == "album" else "📁 فایل"
     
     text = (
         "⚙️ <b>تنظیمات ارسال</b>\n\n"
         f"حالت فعلی: {mode_text}\n\n"
-        "حالت پیشفرض ارسال رو انتخاب کن:\n"
-        "• آلبوم ترکیبی: عکس و ویدیو در یک آلبوم (پخش آنلاین ویدیو)\n"
-        "• فایل: همه چیز به صورت فایل (کیفیت اصلی، حجم بالاتر)"
+        "• آلبوم ترکیبی: عکس و ویدیو در یک آلبوم (پخش آنلاین)\n"
+        "• فایل: همه چیز به صورت فایل (کیفیت اصلی)"
     )
     
     keyboard = get_user_settings_keyboard(user_id)
@@ -84,17 +82,15 @@ async def help_command(update: Update, context):
     await update.message.reply_text(
         "📖 <b>راهنمای ربات</b>\n\n"
         "🔹 ریلز → بر اساس تنظیمات شما\n"
-        "🔹 عکس تک → دو گزینه\n"
+        "🔹 عکس تک → انتخاب دستی\n"
         "🔹 کاروسل → بر اساس تنظیمات شما\n\n"
-        "💡 می‌تونی از طریق /settings حالت ارسال رو تغییر بدی.\n\n"
-        "⚡ ساخته شده با Python + python-telegram-bot",
+        "💡 از /settings برای تغییر حالت استفاده کن.",
         parse_mode='HTML',
         reply_markup=keyboard
     )
 
 
 async def settings_command(update: Update, context):
-    """دستور /settings"""
     await show_settings_menu(update, context)
 
 
@@ -109,7 +105,7 @@ async def send_media_group(chat_id, context, items, caption):
                 caption=current_caption,
                 supports_streaming=True
             ))
-        else:  # photo
+        else:
             media_group.append(InputMediaPhoto(
                 media=item["url"], 
                 caption=current_caption
@@ -123,10 +119,9 @@ async def send_media_group(chat_id, context, items, caption):
 
 
 async def send_as_files(chat_id, context, items, caption):
-    """ارسال همه مدیاها به صورت فایل جداگانه (هم عکس هم ویدیو)"""
+    """ارسال همه به صورت فایل"""
     for i, item in enumerate(items):
         current_caption = caption if i == 0 else None
-        # همه چیز به صورت Document فرستاده میشه
         await context.bot.send_document(
             chat_id=chat_id,
             document=item["url"],
@@ -152,7 +147,7 @@ async def handle_link(update: Update, context):
     try:
         result = await get_instagram_media(url)
         if not result or not result.get("items"):
-            await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم. پست باید عمومی باشه.")
+            await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم.")
             return
 
         context.user_data["pending_result"] = result
@@ -163,45 +158,50 @@ async def handle_link(update: Update, context):
         has_photo = any(item["type"] == "photo" for item in items)
         is_single = len(items) == 1
         default_mode = get_user_default_mode(user_id)
+        
+        # برای دیباگ - توی لاگ نشون بده حالت فعلی چیه
+        print(f"🔍 کاربر {user_id} - حالت فعلی: {default_mode} - تعداد آیتم: {len(items)}")
 
-        # ========== ویدیو تک ==========
+        # ========== ویدیو تک (ریلز) ==========
         if is_single and has_video:
             if default_mode == "file":
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ویدیو پیدا شد، در حال ارسال به صورت فایل...")
-                item = items[0]
+                print("📁 ارسال ویدیو به صورت فایل (Document)")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ارسال ویدیو به صورت فایل...")
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
-                    document=item["url"],
+                    document=items[0]["url"],
                     caption=result.get("caption", "")
                 )
             else:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 ویدیو پیدا شد، در حال ارسال...")
-                item = items[0]
+                print("🎬 ارسال ویدیو به صورت قابل پخش (Video)")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="🎥 در حال ارسال ویدیو...")
                 await context.bot.send_video(
                     chat_id=update.effective_chat.id,
-                    video=item["url"],
+                    video=items[0]["url"],
                     supports_streaming=True,
                     caption=result.get("caption", "")
                 )
             
             context.user_data.pop("pending_result", None)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد! لینک بعدی رو بفرست 🚀")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
             return
 
         # ========== عکس تک ==========
         if is_single and has_photo:
-            text = "📸 <b>عکس پیدا شد!</b>\n\nچطور برات بفرستم؟"
+            text = "📸 <b>عکس پیدا شد!</b>\n\nچطور بفرستم؟"
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🖼 عکس معمولی", callback_data="send_photo")],
-                [InlineKeyboardButton("📁 فایل (کیفیت اصلی)", callback_data="send_file")]
+                [InlineKeyboardButton("📁 فایل", callback_data="send_file")]
             ])
             await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
             return
 
         # ========== کاروسل ==========
         if default_mode == "album":
+            print("🎬 ارسال کاروسل به صورت آلبوم ترکیبی")
             await send_media_group(update.effective_chat.id, context, items, result.get("caption", ""))
         else:
+            print("📁 ارسال کاروسل به صورت فایل")
             await send_as_files(update.effective_chat.id, context, items, result.get("caption", ""))
         
         context.user_data.pop("pending_result", None)
@@ -209,7 +209,7 @@ async def handle_link(update: Update, context):
 
     except Exception as e:
         logger.error(f"Error: {e}")
-        await processing_msg.edit_text("❌ خطایی رخ داد. دوباره امتحان کن.")
+        await processing_msg.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
 async def handle_format_choice(update: Update, context):
@@ -219,7 +219,7 @@ async def handle_format_choice(update: Update, context):
     choice = query.data
     user_id = update.effective_user.id
     
-    # پردازش دکمه‌های تنظیمات
+    # دکمه‌های منوی اصلی
     if choice == "show_settings":
         await show_settings_menu(update, context, query)
         return
@@ -242,26 +242,10 @@ async def handle_format_choice(update: Update, context):
             [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
         ])
         await query.edit_message_text(
-            "📖 <b>راهنمای ربات</b>\n\n"
-            "🔹 ریلز → بر اساس تنظیمات شما\n"
-            "🔹 عکس تک → دو گزینه\n"
-            "🔹 کاروسل → بر اساس تنظیمات شما\n\n"
-            "💡 می‌تونی از طریق /settings حالت ارسال رو تغییر بدی.",
+            "📖 <b>راهنما</b>\n\nاز /settings برای تغییر حالت استفاده کن.",
             parse_mode='HTML',
             reply_markup=keyboard
         )
-        return
-    
-    if choice == "set_mode_album":
-        set_user_default_mode(user_id, "album")
-        await query.answer("✅ حالت آلبوم ترکیبی فعال شد! ویدیوها قابل پخش آنلاین هستند.")
-        await show_settings_menu(update, context, query)
-        return
-    
-    if choice == "set_mode_file":
-        set_user_default_mode(user_id, "file")
-        await query.answer("✅ حالت فایل فعال شد! همه چیز به صورت فایل ارسال میشود.")
-        await show_settings_menu(update, context, query)
         return
     
     if choice == "new_download":
@@ -270,14 +254,26 @@ async def handle_format_choice(update: Update, context):
             [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
         ])
         await query.edit_message_text(
-            "📎 <b>لینک اینستاگرام را بفرستید</b>\n\n"
-            "هر پست، ریلز یا استوری عمومی رو برام بفرست تا برات دانلود کنم.",
+            "📎 <b>لینک اینستاگرام را بفرستید</b>",
             parse_mode='HTML',
             reply_markup=keyboard
         )
         return
     
-    # پردازش ارسال مدیا برای عکس‌های تکی (که منو دارن)
+    # دکمه‌های تنظیمات
+    if choice == "set_mode_album":
+        set_user_default_mode(user_id, "album")
+        await query.answer("✅ حالت آلبوم فعال شد!")
+        await show_settings_menu(update, context, query)
+        return
+    
+    if choice == "set_mode_file":
+        set_user_default_mode(user_id, "file")
+        await query.answer("✅ حالت فایل فعال شد!")
+        await show_settings_menu(update, context, query)
+        return
+    
+    # ارسال عکس تکی
     result = context.user_data.get("pending_result")
     if not result:
         await query.edit_message_text("❌ اطلاعات منقضی شد. لینک رو دوباره بفرست.")
@@ -294,14 +290,7 @@ async def handle_format_choice(update: Update, context):
     try:
         if len(items) == 1:
             item = items[0]
-            if item["type"] == "video":
-                await context.bot.send_video(
-                    chat_id=update.effective_chat.id,
-                    video=item["url"],
-                    supports_streaming=True,
-                    caption=caption
-                )
-            elif choice == "send_photo":
+            if choice == "send_photo":
                 await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     photo=item["url"],
