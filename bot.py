@@ -133,17 +133,21 @@ async def handle_highlight_callback(update: Update, context):
     await query.answer()
 
     try:
-        _, highlight_id, title = query.data.split(":", 2)
-    except:
-        await query.edit_message_text("❌ خطای پردازش.")
+        # تفکیک دقیق داده‌های دکمه شیشه‌ای
+        data_parts = query.data.split(":", 2)
+        highlight_id = data_parts[1]
+        title = data_parts[2] if len(data_parts) > 2 else "هایلایت"
+    except Exception as e:
+        logger.error(f"Callback split error: {e}")
+        await query.edit_message_text("❌ خطای پردازش دکمه.")
         return
 
-    processing = await query.edit_message_text(f"📥 در حال دانلود «{title}»...")
+    processing = await query.edit_message_text(f"📥 در حال دانلود «{title}»...\n(ممکن است چند ثانیه زمان ببرد)")
 
     try:
         result = await get_instagram_highlight_stories(highlight_id, title)
         if not result or not result.get("items"):
-            await processing.edit_text("❌ این هایلایت محتوا ندارد یا قابل دسترسی نیست.")
+            await processing.edit_text("❌ این هایلایت محتوایی برای نمایش ندارد یا اکانت خصوصی (Private) است.")
             return
 
         items = result["items"]
@@ -161,9 +165,8 @@ async def handle_highlight_callback(update: Update, context):
         await processing.delete()
 
     except Exception as e:
-        logger.error(f"Highlight error: {e}")
-        await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
-
+        logger.error(f"Highlight Callback error: {e}")
+        await processing.edit_text(f"❌ خطا در ارسال محتوا: {str(e)[:100]}")
 
 async def send_media_group(chat_id, context, items, caption):
     """ارسال آلبوم با مدیریت Flood"""
