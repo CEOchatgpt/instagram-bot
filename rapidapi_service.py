@@ -337,12 +337,20 @@ async def get_user_reels(username: str, max_id: str = ""):
                     if not video_url:
                         continue
                     
-                    # استخراج کپشن
+                    # در تابع get_user_reels، جایی که کپشن رو استخراج می‌کنید، این قسمت رو اصلاح کنید:
+
+                    # استخراج کپشن - اصلاح شده
                     caption = reel.get("caption", "")
+                    if isinstance(caption, dict):
+                        caption = caption.get("text", "")
                     if not caption:
                         caption = reel.get("title", "")
+                    if isinstance(caption, dict):
+                        caption = caption.get("text", "")
                     if not caption:
                         caption = reel.get("text", "")
+                    if isinstance(caption, dict):
+                        caption = caption.get("text", "")
                     if not caption:
                         caption = "بدون کپشن"
                     
@@ -440,10 +448,26 @@ async def get_user_reels_v2(username: str):
                                 video_url = best.get("url")
                         
                         if video_url:
+                            # استخراج درست کپشن - مشکل اصلی اینجاست
+                            raw_caption = post.get("caption", "")
+                            
+                            # اگر کپشن دیکشنری بود، متن رو استخراج کن
+                            if isinstance(raw_caption, dict):
+                                caption_text = raw_caption.get("text", "")
+                            else:
+                                caption_text = str(raw_caption) if raw_caption else ""
+                            
+                            # اگر باز هم دیکشنری بود (مثل {'has_translation': True, 'text': '...'})
+                            if isinstance(caption_text, dict):
+                                caption_text = caption_text.get("text", "")
+                            
+                            if not caption_text:
+                                caption_text = "بدون کپشن"
+                            
                             items.append({
                                 "id": post.get("id", ""),
                                 "url": video_url,
-                                "caption": post.get("caption", "بدون کپشن"),
+                                "caption": caption_text[:200],
                                 "like_count": post.get("like_count", 0),
                                 "comment_count": post.get("comment_count", 0),
                                 "play_count": post.get("play_count", 0),
@@ -459,7 +483,6 @@ async def get_user_reels_v2(username: str):
     except Exception as e:
         logger.error(f"Error in get_user_reels_v2: {e}")
         return None
-
 
 async def get_user_reels_direct(username: str):
     """نسخه سوم - دریافت مستقیم با استفاده از endpoint profile"""
