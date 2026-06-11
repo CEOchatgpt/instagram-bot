@@ -61,7 +61,8 @@ async def start(update: Update, context):
         "<code>/profile @username</code> - اطلاعات پروفایل\n"
         "<code>/reels @username</code> - دریافت ریل‌ها\n"
         "<code>/highlights @username</code> - دریافت هایلایت‌ها\n"
-        "<code>/settings</code> - تنظیمات ارسال\n\n"
+        "<code>/settings</code> - تنظیمات ارسال\n"
+        "<code>/help</code> - راهنما\n\n"
         "<i>ساخته شده با ❤️</i>",
         parse_mode='HTML',
         reply_markup=keyboard
@@ -390,7 +391,7 @@ async def help_command(update: Update, context):
     await update.effective_message.reply_text(
         "📖 <b>راهنمای ربات</b>\n\n"
         "🔹 <b>ارسال لینک:</b>\n"
-        "   هر لینکی از اینستاگرام (پست، ریلز، استوری، هایلایت، channel)\n\n"
+        "   هر لینکی از اینستاگرام (پست، ریلز، استوری، هایلایت)\n\n"
         "🔹 <b>دستورات:</b>\n"
         "   /profile @username - اطلاعات پروفایل\n"
         "   /reels @username - دریافت ریل‌ها\n"
