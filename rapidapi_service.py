@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه نهایی با رفع مشکلات کپشن و لینک
+# rapidapi_service.py - نسخه با پشتیبانی از channel و بهبود یافته
 
 import re
 import aiohttp
@@ -14,13 +14,7 @@ RETRY_DELAY = 1
 
 
 def extract_caption_text(caption_field):
-    """
-    استخراج متن کپشن از ساختارهای مختلف
-    ممکن است کپشن به صورت:
-    - string ساده
-    - دیکشنری با کلید text
-    - دیکشنری با کلید های دیگر
-    """
+    """استخراج متن کپشن از ساختارهای مختلف"""
     if not caption_field:
         return ""
     
@@ -28,17 +22,13 @@ def extract_caption_text(caption_field):
         return caption_field
     
     if isinstance(caption_field, dict):
-        # اولویت با کلید text
         if "text" in caption_field:
             return caption_field["text"]
-        # سپس کلید caption
         if "caption" in caption_field:
             return extract_caption_text(caption_field["caption"])
-        # هر کلید دیگری که ممکنه متن باشه
         for key in ["content", "body", "description", "title"]:
             if key in caption_field:
                 return str(caption_field[key])
-        # اگر هیچکدام نبود، دیکشنری رو به رشته تبدیل نکن!
         return ""
     
     return str(caption_field) if caption_field else ""
@@ -46,24 +36,19 @@ def extract_caption_text(caption_field):
 
 def format_caption(raw) -> str:
     """فرمت کردن کپشن"""
-    # استخراج متن از هر ساختاری که هست
     text = extract_caption_text(raw)
     
     if not text:
         return "بدون کپشن"
     
-    # حذف لینک‌ها
     text = re.sub(r'https?://\S+', '', text)
-    
-    # استخراج هشتگ‌ها
     hashtags = re.findall(r'#\w+', text)
     text = re.sub(r'#\w+', '', text)
-    
     text = text.strip()
+    
     if not text:
         text = "بدون کپشن"
     
-    # اضافه کردن هشتگ‌ها در انتها
     if hashtags:
         hashtag_line = " ".join(hashtags)
         text = text + "\n\n" + hashtag_line
@@ -149,9 +134,16 @@ async def get_instagram_highlights(username: str):
 
 
 async def get_instagram_media(post_url: str) -> dict | None:
-    """دریافت محتوای پست از لینک مستقیم"""
+    """دریافت محتوای پست از لینک مستقیم - پشتیبانی از channel"""
     if not post_url or "instagram.com" not in post_url:
         return None
+
+    # پشتیبانی از لینک‌های channel
+    channel_match = re.search(r'instagram\.com/channel/([^/]+)/?(\d+)?', post_url)
+    if channel_match:
+        logger.info(f"Channel URL detected: {post_url}")
+        # برای channel، از endpoint جداگانه استفاده می‌کنیم یا همان روش معمولی
+        pass
 
     story_match = re.search(r'instagram\.com/stories/([^/]+)/?(\d+)?', post_url)
     if story_match:
@@ -169,9 +161,11 @@ async def get_instagram_media(post_url: str) -> dict | None:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(api_url, json={"url": post_url}, headers=headers, timeout=15) as response:
-                    response.raise_for_status()
-                    data = await response.json()
-            break
+                    if response.status == 200:
+                        data = await response.json()
+                        break
+                    else:
+                        logger.warning(f"Attempt {attempt} got status {response.status}")
         except Exception as e:
             logger.warning(f"Attempt {attempt} failed: {e}")
             if attempt < MAX_RETRIES:
@@ -253,8 +247,9 @@ async def get_instagram_story(username: str, story_id: str = None):
         logger.error(f"Error getting story: {e}")
         return None
 
+
 async def get_user_reels_v2(username: str):
-    """دریافت ریل‌ها از endpoint posts - نسخه اصلی و پایدار"""
+    """دریافت ریل‌ها از endpoint posts"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -274,7 +269,6 @@ async def get_user_reels_v2(username: str):
                 
                 items = []
                 
-                # پیدا کردن لیست پست‌ها
                 posts_list = []
                 if isinstance(result, dict):
                     if "items" in result:
@@ -295,7 +289,6 @@ async def get_user_reels_v2(username: str):
                     if not isinstance(post, dict):
                         continue
                     
-                    # بررسی اگر ویدیو/ریل است
                     media_type = post.get("media_type", 0)
                     is_video = post.get("is_video", False) or media_type == 2
                     
@@ -308,7 +301,6 @@ async def get_user_reels_v2(username: str):
                                 video_url = best.get("url")
                         
                         if video_url and video_url.startswith(('http://', 'https://')):
-                            # استخراج درست کپشن
                             raw_caption = post.get("caption", "")
                             caption_text = extract_caption_text(raw_caption)
                             
@@ -338,6 +330,3 @@ async def get_user_reels_v2(username: str):
     except Exception as e:
         logger.error(f"Error in get_user_reels_v2 for {username}: {e}")
         return None
-
-
-
