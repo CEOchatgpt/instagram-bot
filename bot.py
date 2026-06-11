@@ -188,7 +188,8 @@ async def handle_highlight_callback(update: Update, context):
     try:
         index = int(callback_id.split("_")[1])
         highlight_info = highlights_list[index] if index < len(highlights_list) else None
-    except (IndexError, ValueError):
+    except (IndexError, ValueError) as e:
+        logger.error(f"Error parsing callback: {e}")
         highlight_info = None
     
     if not highlight_info:
@@ -199,6 +200,8 @@ async def handle_highlight_callback(update: Update, context):
     title = highlight_info.get("title", "هایلایت")
     username = highlight_info.get("username")
     
+    logger.info(f"Processing highlight: {title}, ID: {highlight_id}, Username: {username}")
+    
     # ارسال پیام در حال پردازش
     processing_msg = await query.edit_message_text(f"📥 در حال دریافت محتوای هایلایت «{title}»...")
     
@@ -207,12 +210,14 @@ async def handle_highlight_callback(update: Update, context):
         result = await get_instagram_highlight_stories(highlight_id, username, title)
         
         if not result or not result.get("items"):
+            logger.warning(f"No items found for highlight {title}")
             await processing_msg.edit_text(
-                f"❌ این هایلایت محتوا ندارد یا قابل دسترسی نیست.\n"
-                f"ممکن است:\n"
-                f"• پیج خصوصی شده باشد\n"
-                f"• هایلایت حذف شده باشد\n"
-                f"• محدودیت دسترسی وجود داشته باشد"
+                f"❌ این هایلایت محتوا ندارد یا قابل دسترسی نیست.\n\n"
+                f"📌 دلایل احتمالی:\n"
+                f"• پیج خصوصی شده است\n"
+                f"• هایلایت حذف شده است\n"
+                f"• محدودیت دسترسی API\n\n"
+                f"💡 راه حل: مستقیماً لینک اینستاگرام را در بات ارسال کنید."
             )
             return
 
@@ -239,7 +244,6 @@ async def handle_highlight_callback(update: Update, context):
                     )
             except Exception as send_error:
                 logger.error(f"Send error: {send_error}")
-                # اگر خطا داد، به عنوان داکیومنت بفرست
                 await context.bot.send_document(
                     chat_id=query.message.chat_id,
                     document=item["url"],
@@ -253,8 +257,7 @@ async def handle_highlight_callback(update: Update, context):
     except Exception as e:
         logger.error(f"Highlight download error: {e}")
         await processing_msg.edit_text(f"❌ خطا در دانلود: {str(e)[:150]}")
-
-
+        
 async def send_media_group(chat_id, context, items, caption):
     """ارسال آلبوم با مدیریت خطا"""
     media_group = []
