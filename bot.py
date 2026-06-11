@@ -1,10 +1,11 @@
-# bot.py - نسخه جامع و اصلاح‌شده برای رفع مشکل ساخت دکمه‌های هایلایت
+# bot.py - نسخه اصلاح شده برای رفع مشکل هایلایت
 
 import aiohttp
 import asyncio
 import logging
 import time
 from collections import defaultdict
+import json
 
 from telegram import (
     Update, InputMediaVideo, InputMediaPhoto,
@@ -97,6 +98,7 @@ async def profile_command(update: Update, context):
 
 
 async def highlights_command(update: Update, context):
+    """دریافت و نمایش هایلایت‌های کاربر"""
     if not context.args:
         await update.effective_message.reply_text("⚠️ نحوه استفاده:\n/highlights leomessi")
         return
@@ -107,7 +109,7 @@ async def highlights_command(update: Update, context):
     try:
         highlights_data = await get_instagram_highlights(username)
         
-        # مدیریت انواع ساختارهای خروجی متفاوت API اینستاگرام
+        # مدیریت انواع ساختارهای خروجی
         highlights_list = []
         if isinstance(highlights_data, list):
             highlights_list = highlights_data
@@ -117,47 +119,49 @@ async def highlights_command(update: Update, context):
                 highlights_list = [highlights_data]
 
         if not highlights_list:
-            await processing.edit_text("❌ هیچ هایلایتی پیدا نشد یا پیج خصوصی (Private) است.")
+            await processing.edit_text("❌ هیچ هایلایتی پیدا نشد یا پیج خصوصی است.")
             return
 
-        # ذخیره username در context برای استفاده در callback
-        context.user_data['highlights_username'] = username
-
+        # ذخیره اطلاعات هایلایت‌ها در context.user_data
+        context.user_data['current_highlights'] = []
+        
         keyboard = []
-        for h in highlights_list[:15]:
+        for i, h in enumerate(highlights_list[:15]):
             if not isinstance(h, dict):
                 continue
                 
-            # استخراج منعطف شناسه اصلی هایلایت
+            # استخراج شناسه هایلایت
             hl_id = h.get("id") or h.get("highlight_id") or h.get("pk")
             if not hl_id:
                 continue
 
             title = h.get("title", "هایلایت")
-            # حذف کاراکترهای خاص از title برای callback_data
-            safe_title = title.replace(":", "").replace(" ", "_")[:20]
+            # حذف کاراکترهای خاص از عنوان
+            clean_title = title.replace(":", "").replace("\n", "").strip()
             count = h.get("count") or h.get("media_count") or 0
-            button_text = f"📚 {title} ({count})" if count else f"📚 {title}"
             
-            # ذخیره اطلاعات کامل در context.user_data به جای callback_data
-            if 'highlights_data' not in context.user_data:
-                context.user_data['highlights_data'] = {}
+            # ایجاد یک شناسه یکتا برای دکمه (با استفاده از ایندکس)
+            button_id = f"hl_{i}"
             
-            callback_key = f"hl_{hl_id}"
-            context.user_data['highlights_data'][callback_key] = {
-                "id": hl_id,
-                "title": title,
+            # ذخیره اطلاعات کامل
+            context.user_data['current_highlights'].append({
+                "id": str(hl_id),
+                "title": clean_title,
                 "username": username
-            }
+            })
             
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_key)])
+            button_text = f"📚 {clean_title}"
+            if count and count > 0:
+                button_text = f"📚 {clean_title} ({count})"
+            
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=button_id)])
 
         if not keyboard:
-            await processing.edit_text("❌ خطا در پردازش شناسه هایلایت‌ها.")
+            await processing.edit_text("❌ خطا در پردازش هایلایت‌ها.")
             return
 
         await processing.edit_text(
-            f"📚 هایلایت‌های @{username} ({len(highlights_list)} مورد):",
+            f"📚 هایلایت‌های @{username}:\n\nاز دکمه‌های زیر برای مشاهده هر هایلایت استفاده کنید:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -165,15 +169,27 @@ async def highlights_command(update: Update, context):
         logger.error(f"Error in highlights_command: {e}")
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
 
+
 async def handle_highlight_callback(update: Update, context):
+    """پردازش کلیک روی دکمه هایلایت"""
     query = update.callback_query
     await query.answer()
     
-    callback_key = query.data
+    callback_id = query.data
     
-    # دریافت اطلاعات ذخیره شده از context
-    highlights_data = context.user_data.get('highlights_data', {})
-    highlight_info = highlights_data.get(callback_key)
+    # اگر callback_id با hl_ شروع نمی‌شود، نادیده بگیر
+    if not callback_id.startswith("hl_"):
+        return
+    
+    # دریافت اطلاعات هایلایت از حافظه
+    highlights_list = context.user_data.get('current_highlights', [])
+    
+    # استخراج ایندکس از callback_id (مثلاً hl_0 -> 0)
+    try:
+        index = int(callback_id.split("_")[1])
+        highlight_info = highlights_list[index] if index < len(highlights_list) else None
+    except (IndexError, ValueError):
+        highlight_info = None
     
     if not highlight_info:
         await query.edit_message_text("❌ اطلاعات هایلایت یافت نشد. لطفا دوباره از /highlights استفاده کنید.")
@@ -183,18 +199,27 @@ async def handle_highlight_callback(update: Update, context):
     title = highlight_info.get("title", "هایلایت")
     username = highlight_info.get("username")
     
-    processing = await query.edit_message_text(f"📥 در حال دانلود هایلایت «{title}»...")
+    # ارسال پیام در حال پردازش
+    processing_msg = await query.edit_message_text(f"📥 در حال دریافت محتوای هایلایت «{title}»...")
     
     try:
-        # ارسال username به تابع برای روش جایگزین
+        # دریافت استوری‌های هایلایت
         result = await get_instagram_highlight_stories(highlight_id, username, title)
         
         if not result or not result.get("items"):
-            await processing.edit_text("❌ این هایلایت محتوا ندارد یا قابل دسترسی نیست.\nممکن است پیج خصوصی باشد یا هایلایت حذف شده باشد.")
+            await processing_msg.edit_text(
+                f"❌ این هایلایت محتوا ندارد یا قابل دسترسی نیست.\n"
+                f"ممکن است:\n"
+                f"• پیج خصوصی شده باشد\n"
+                f"• هایلایت حذف شده باشد\n"
+                f"• محدودیت دسترسی وجود داشته باشد"
+            )
             return
 
         items = result["items"]
         caption = result["caption"]
+        
+        logger.info(f"✅ دریافت {len(items)} آیتم برای هایلایت {title}")
 
         if len(items) == 1:
             item = items[0]
@@ -214,7 +239,7 @@ async def handle_highlight_callback(update: Update, context):
                     )
             except Exception as send_error:
                 logger.error(f"Send error: {send_error}")
-                # اگر ارسال مستقیم خطا داد، به عنوان داکیومنت بفرست
+                # اگر خطا داد، به عنوان داکیومنت بفرست
                 await context.bot.send_document(
                     chat_id=query.message.chat_id,
                     document=item["url"],
@@ -223,28 +248,33 @@ async def handle_highlight_callback(update: Update, context):
         else:
             await send_media_group(query.message.chat_id, context, items, caption)
 
-        await processing.delete()
+        await processing_msg.delete()
 
     except Exception as e:
         logger.error(f"Highlight download error: {e}")
-        await processing.edit_text(f"❌ خطا در دانلود: {str(e)[:150]}")
+        await processing_msg.edit_text(f"❌ خطا در دانلود: {str(e)[:150]}")
+
 
 async def send_media_group(chat_id, context, items, caption):
-    """ارسال آلبوم با مدیریت Flood"""
+    """ارسال آلبوم با مدیریت خطا"""
     media_group = []
     for i, item in enumerate(items):
         current_caption = caption if i == 0 else None
-        if item["type"] == "video":
-            media_group.append(InputMediaVideo(
-                media=item["url"], 
-                caption=current_caption,
-                supports_streaming=True
-            ))
-        else:
-            media_group.append(InputMediaPhoto(
-                media=item["url"], 
-                caption=current_caption
-            ))
+        try:
+            if item["type"] == "video":
+                media_group.append(InputMediaVideo(
+                    media=item["url"], 
+                    caption=current_caption,
+                    supports_streaming=True
+                ))
+            else:
+                media_group.append(InputMediaPhoto(
+                    media=item["url"], 
+                    caption=current_caption
+                ))
+        except Exception as e:
+            logger.error(f"Error creating media item: {e}")
+            continue
 
     for i in range(0, len(media_group), 10):
         try:
@@ -345,34 +375,68 @@ async def handle_link(update: Update, context):
         await processing_msg.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
-async def handle_format_choice(update: Update, context):
+async def handle_callback(update: Update, context):
+    """مدیریت تمام کال‌بک‌ها"""
     query = update.callback_query
     await query.answer()
-    choice = query.data
+    
+    data = query.data
     user_id = update.effective_user.id
-
-    if choice == "show_settings":
+    
+    if data == "new_download":
+        await query.edit_message_text("لطفاً لینک اینستاگرام خود را ارسال کنید:")
+    
+    elif data == "show_settings":
         await show_settings_menu(update, context, query)
-    elif choice == "set_mode_album":
+    
+    elif data == "show_help":
+        await help_command(update, context)
+    
+    elif data == "set_mode_album":
         set_user_default_mode(user_id, "album")
         await show_settings_menu(update, context, query)
-    elif choice == "set_mode_file":
+    
+    elif data == "set_mode_file":
         set_user_default_mode(user_id, "file")
         await show_settings_menu(update, context, query)
+    
+    elif data == "back_to_main":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚀 دانلود جدید", callback_data="new_download")],
+            [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings")],
+            [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
+        ])
+        await query.edit_message_text(
+            "<b>👋 سلام! ربات دانلود اینستاگرام</b>\n\n"
+            "لینک پست، ریلز، استوری یا هایلایت بفرست.\n"
+            "یا دستور /highlights @username بزن.\n\n"
+            "<i>ساخته شده با ❤️</i>",
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+    
+    # اگر با hl_ شروع می‌شود، به تابع هایلایت بفرست
+    elif data.startswith("hl_"):
+        await handle_highlight_callback(update, context)
 
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    # افزایش timeout برای جلوگیری از خطای TimedOut
+    app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
     
+    # هندلرهای فرمان
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("highlights", highlights_command))
+    
+    # هندلر لینک
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
-    app.add_handler(CallbackQueryHandler(handle_highlight_callback, pattern="^hl:"))
-    app.add_handler(CallbackQueryHandler(handle_format_choice))
-
+    
+    # هندلر کال‌بک (برای همه دکمه‌ها)
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    
     print("🤖 ربات در حال اجراست...")
     app.run_polling()
 
