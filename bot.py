@@ -97,35 +97,62 @@ async def profile_command(update: Update, context):
 
 
 async def highlights_command(update: Update, context):
-    if not context.args:
-        await update.effective_message.reply_text("⚠️ نحوه استفاده:\n/highlights cristiano")
+    # ... بخش‌های ابتدایی تابع و گرفتن یوزرنیم ...
+    username = context.args[0] if context.args else None
+    if not username:
+        await update.message.reply_text("❌ لطفاً یوزرنیم را وارد کنید. مثال:\n/highlights leomessi")
         return
 
-    username = context.args[0].strip("@")
-    processing = await update.effective_message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
-
+    processing = await update.message.reply_text("🔍 در حال دریافت لیست هایلایت‌ها...")
+    
     try:
-        highlights = await get_instagram_highlights(username)
-        if not highlights:
-            await processing.edit_text("❌ هیچ هایلایتی پیدا نشد.")
+        # دریافت لیست هایلایت‌ها از API
+        highlights_data = await get_instagram_highlights(username)
+        if not highlights_data or "meta" not in highlights_data:
+            await processing.edit_text("❌ هایلایتی یافت نشد یا پیج خصوصی است.")
             return
 
         keyboard = []
-        for h in highlights[:15]:
-            # استخراج درست شمارنده مدیا
-            highlight_count = h.get("count") or h.get("media_count") or 0
-            keyboard.append([InlineKeyboardButton(
-                f"📚 {h.get('title', 'هایلایت')} ({highlight_count})",
-                callback_data=f"hl:{h.get('highlight_id')}:{h.get('title', 'هایلایت')}"
-            )])
+        # بررسی وجود لیست هایلایت‌ها در دیتای برگشتی
+        # معمولاً در اندپوینت‌ها به صورت لیستی از دیکشنری‌ها درون یک کلید یا مستقیماً برمی‌گردد
+        highlights_list = highlights_data.get("items", []) or highlights_data.get("result", [])
+        
+        if not highlights_list:
+            await processing.edit_text("❌ این کاربر هایلایت فعال ندارد.")
+            return
 
-        await processing.edit_text(
-            f"📚 هایلایت‌های @{username} ({len(highlights)} مورد)",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        for hl in highlights_list[:15]: # محدود کردن به ۱۵ هایلایت اول برای شلوغ نشدن کیبورد
+            hl_id = hl.get("id")
+            # برخی APIها ممکن است کلید را به صورت highlight_id یا pk بفرستند
+            if not hl_id:
+                hl_id = hl.get("highlight_id") or hl.get("pk")
+                
+            title = hl.get("title", "هایلایت")
+            
+            if hl_id:
+                # ساخت داده دکمه به شکل hl:id:title 
+                # برای جلوگیری از خطای ۶۴ بایت تلگرام، عنوان را کوتاه می‌کنیم
+                short_title = title[:15]
+                callback_data = f"hl:{hl_id}:{short_title}"
+                
+                # مطمئن می‌شویم طول کل داده از ۶۴ بایت بیشتر نشود
+                if len(callback_data.encode('utf-8')) <= 64:
+                    keyboard.append([InlineKeyboardButton(f"📚 {title}", callback_data=callback_data)])
+                else:
+                    # اگر طولانی بود عنوان را حذف یا کمتر می‌کنیم
+                    keyboard.append([InlineKeyboardButton(f"📚 {title}", callback_data=f"hl:{hl_id}:H")])
+
+        if not keyboard:
+            await processing.edit_text("❌ خطا در پردازش شناسه هایلایت‌ها.")
+            return
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(f"👇 هایلایت‌های پیج {username} :", reply_markup=reply_markup)
+        await processing.delete()
 
     except Exception as e:
-        await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
+        logger.error(f"Error in highlights_command: {e}")
+        await processing.edit_text(f"❌ خطایی رخ داد: {str(e)[:100]}")
 
 
 async def handle_highlight_callback(update: Update, context):
@@ -133,15 +160,18 @@ async def handle_highlight_callback(update: Update, context):
     await query.answer()
 
     try:
-        # تفکیک دقیق داده‌های دکمه شیشه‌ای
+        # داده دکمه را بر اساس علامت : جدا می‌کنیم
         data_parts = query.data.split(":", 2)
         highlight_id = data_parts[1]
         title = data_parts[2] if len(data_parts) > 2 else "هایلایت"
+        
+        # یک چک کوچک برای دیباگ در ترمینال شما
+        print(f"📌 دکمه فشرده شد -> شناسه واقعی هایلایت: {highlight_id} | عنوان: {title}")
     except Exception as e:
         logger.error(f"Callback split error: {e}")
         await query.edit_message_text("❌ خطای پردازش دکمه.")
         return
-
+        
     processing = await query.edit_message_text(f"📥 در حال دانلود «{title}»...\n(ممکن است چند ثانیه زمان ببرد)")
 
     try:
