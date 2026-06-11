@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی با رفع تمام مشکلات
+# bot.py - نسخه اصلاح شده با رفع خطای timeout
 
 import asyncio
 import logging
@@ -160,6 +160,12 @@ async def reels_command(update: Update, context):
         
         items = result["items"]
         
+        if len(items) == 0:
+            await processing_msg.edit_text(
+                f"❌ هیچ ریلی برای @{username} پیدا نشد."
+            )
+            return
+        
         context.user_data['reels_data'] = {
             "username": username,
             "items": items,
@@ -222,7 +228,7 @@ async def show_reel_item(update: Update, context, username: str, index: int):
     
     markup = InlineKeyboardMarkup(keyboard)
     
-    # ارسال ویدیو (با fallback)
+    # ارسال ویدیو (بدون پارامتر timeout)
     try:
         await context.bot.send_video(
             chat_id=update.effective_chat.id,
@@ -230,8 +236,7 @@ async def show_reel_item(update: Update, context, username: str, index: int):
             caption=caption,
             supports_streaming=True,
             parse_mode='HTML',
-            reply_markup=markup,
-            timeout=60
+            reply_markup=markup
         )
     except Exception as e:
         logger.warning(f"send_video failed: {e}")
