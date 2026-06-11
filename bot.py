@@ -185,30 +185,31 @@ async def handle_link(update: Update, context):
             await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
             return
 
-       # ========== عکس تک ==========
-
-    if is_single and has_photo:
-    default_mode = get_user_default_mode(user_id)
+        # ========== عکس تک ==========
     
-    if default_mode == "file":
-        # مستقیم فایل بفرست
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="📸 در حال ارسال عکس به صورت فایل...")
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=items[0]["url"],
-            caption=result.get("caption", "")
-        )
-        context.user_data.pop("pending_result", None)
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
-    else:
-        # منوی انتخاب رو نشون بده
-        text = "📸 <b>عکس پیدا شد!</b>\n\nچطور بفرستم؟"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🖼 عکس معمولی", callback_data="send_photo")],
-            [InlineKeyboardButton("📁 فایل", callback_data="send_file")]
-        ])
-        await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
-    return
+        if is_single and has_photo:
+        default_mode = get_user_default_mode(user_id)
+        
+        if default_mode == "file":
+            # مستقیم فایل بفرست
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="📸 در حال ارسال عکس به صورت فایل...")
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=items[0]["url"],
+                caption=result.get("caption", "")
+            )
+            context.user_data.pop("pending_result", None)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ ارسال شد!")
+        else:
+            # منوی انتخاب رو نشون بده
+            text = "📸 <b>عکس پیدا شد!</b>\n\nچطور بفرستم؟"
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🖼 عکس معمولی", callback_data="send_photo")],
+                [InlineKeyboardButton("📁 فایل", callback_data="send_file")]
+            ])
+            await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+        return
+        
         # ========== کاروسل ==========
         if default_mode == "album":
             print("🎬 ارسال کاروسل به صورت آلبوم ترکیبی")
