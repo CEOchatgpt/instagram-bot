@@ -95,7 +95,7 @@ async def settings_command(update: Update, context):
 
 
 async def send_media_group(chat_id, context, items, caption):
-    """ارسال آلبوم ترکیبی با مدیریت خطا و جلوگیری از Flood"""
+    """ارسال آلبوم ترکیبی"""
     media_group = []
     for i, item in enumerate(items):
         current_caption = caption if i == 0 else None
@@ -111,28 +111,11 @@ async def send_media_group(chat_id, context, items, caption):
                 caption=current_caption
             ))
     
-    # ارسال به گروه‌های ۱۰ تایی + تأخیر برای جلوگیری از بلاک شدن
-    sent_count = 0
     for i in range(0, len(media_group), 10):
-        batch = media_group[i:i+10]
-        try:
-            await context.bot.send_media_group(
-                chat_id=chat_id,
-                media=batch
-            )
-            sent_count += len(batch)
-            print(f"✅ گروه {i//10 + 1} ارسال شد ({len(batch)} آیتم)")
-            
-            # تأخیر کوچک بین گروه‌ها برای جلوگیری از Flood
-            if i + 10 < len(media_group):
-                await asyncio.sleep(1.5)
-                
-        except Exception as e:
-            print(f"⚠️ خطا در ارسال گروه {i//10 + 1}: {e}")
-            # ادامه به گروه بعدی
-            await asyncio.sleep(2)
-    
-    return sent_count
+        await context.bot.send_media_group(
+            chat_id=chat_id,
+            media=media_group[i:i+10]
+        )
 
 
 async def send_as_files(chat_id, context, items, caption):
