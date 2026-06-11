@@ -1,163 +1,131 @@
-# rapidapi_service.py
+# rapidapi_service.py - نسخه اصلاح شده کامل
 
-import re       # برای کار با عبارات منظم (پیدا کردن هشتگ‌ها و لینک‌ها)
-import aiohttp  # کتابخونه‌ای برای درخواست‌های HTTP به صورت async (غیر blocking)
-import asyncio  # برای استفاده از asyncio.sleep در فاصله بین retry‌ها
-from config import RAPIDAPI_KEY, RAPIDAPI_HOST  # کلید API و آدرس سرویس رو از فایل تنظیمات میخونه
+import re
+import aiohttp
+import asyncio
+from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 
-MAX_RETRIES = 3   # حداکثر تعداد دفعاتی که دوباره امتحان میکنه
-RETRY_DELAY = 1   # تاخیر اولیه به ثانیه — هر بار دو برابر میشه (1 → 2 → 4)
+MAX_RETRIES = 3
+RETRY_DELAY = 1
 
 
 def format_caption(raw: str) -> str:
-    """
-    کپشن خام اینستاگرام رو تمیز و خوانا میکنه:
-      ۱. لینک‌های http/https رو حذف میکنه
-      ۲. هشتگ‌ها رو از متن جدا میکنه و ته کپشن میذاره
-      ۳. اگه متن اصلی خالی بود، یه پیام پیش‌فرض میذاره
-      ۴. طول رو به حداکثر ۱۰۲۴ کاراکتر (محدودیت تلگرام) محدود میکنه
-    """
-
-    # همه لینک‌های http و https رو پیدا میکنه و حذف میکنه
-    # \S+ یعنی هر کاراکتر غیر از فاصله — یعنی کل URL رو میگیره
+    """تمیز کردن کپشن اینستاگرام"""
     text = re.sub(r'https?://\S+', '', raw)
-
-    # همه هشتگ‌ها رو پیدا میکنه و توی یه لیست جدا نگه میداره
-    # #\w+ یعنی # و بعدش یه یا چند حرف/عدد/آندراسکور
     hashtags = re.findall(r'#\w+', text)
-
-    # هشتگ‌ها رو از متن اصلی حذف میکنه تا متن تمیزتر بشه
     text = re.sub(r'#\w+', '', text)
-
-    # فاصله‌ها و خط‌های خالی اضافه رو کنار میذاره
     text = text.strip()
-
-    # اگه بعد از پاکسازی متنی نموند، یه پیام پیش‌فرض میذاره
     if not text:
         text = "بدون کپشن"
-
-    # هشتگ‌ها رو با فاصله کنار هم میذاره و ته متن اضافه میکنه
     hashtag_line = " ".join(hashtags)
-
-    # کپشن نهایی رو میسازه: پیشوند + متن + هشتگ‌ها (اگه هشتگی بود)
     caption = "تق ✅\n\n" + text
     if hashtag_line:
-        caption += f"\n\n{hashtag_line}"  # هشتگ‌ها رو با یه خط خالی جدا میکنه
-
-    # اگه از ۱۰۲۴ کاراکتر بیشتر شد، از آخرین فاصله قبل از کاراکتر ۱۰۲۰ برش میده
+        caption += f"\n\n{hashtag_line}"
     if len(caption) > 1024:
         cut = caption[:1020].rsplit(" ", 1)[0]
-        caption = cut + " ..."  # سه نقطه نشون میده که ادامه داشته
-
+        caption = cut + " ..."
     return caption
 
 
-# این تابع async هست، یعنی وقتی منتظر جواب API‌ه، بقیه کاربرا رو block نمیکنه
 async def get_instagram_media(post_url: str) -> dict | None:
-    """
-    media های پست + کپشن رو برمیگردونه.
-    خروجی: {"caption": "...", "items": [{"type": "video"/"photo", "url": "..."}]}
-    """
-
-    # آدرس کامل endpoint ای که باید بهش درخواست بزنیم رو میسازه
+    """دریافت مدیاهای اینستاگرام از API"""
+    
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
-
-    # هدرهایی که باید با هر درخواست بفرستیم تا RapidAPI بفهمه کی هستیم
     headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,       # کلید احراز هویت ما
-        "X-RapidAPI-Host": RAPIDAPI_HOST,      # آدرس هاست API
-        "Content-Type": "application/json",    # میگه که body درخواست JSON‌ه
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST,
+        "Content-Type": "application/json",
     }
 
-    data = None  # متغیر برای نگه داشتن جواب API — بیرون از حلقه تعریف میشه
+    data = None
 
-    # حلقه retry — اگه خطا بخوره، تا MAX_RETRIES بار دوباره امتحان میکنه
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            # یه session HTTP باز میکنه — مثل باز کردن یه اتصال به اینترنت
             async with aiohttp.ClientSession() as session:
-
-                # درخواست POST میزنه و منتظر جواب میمونه (بدون block کردن بقیه)
                 async with session.post(
-                    api_url,                                   # آدرس API
-                    json={"url": post_url},                    # لینک اینستاگرام رو توی body میفرسته
-                    headers=headers,                           # هدرهای احراز هویت
-                    timeout=aiohttp.ClientTimeout(total=15),   # اگه تا ۱۵ ثانیه جواب نداد، timeout میده
+                    api_url,
+                    json={"url": post_url},
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
                 ) as response:
-                    response.raise_for_status()                # اگه کد خطا (4xx یا 5xx) برگشت، exception میندازه
-                    data = await response.json()               # جواب JSON رو به صورت async میخونه و parse میکنه
-
-            # اگه به اینجا رسیدیم یعنی درخواست موفق بود — از حلقه retry خارج میشیم
+                    response.raise_for_status()
+                    data = await response.json()
             break
 
         except aiohttp.ClientResponseError as e:
-            # خطای 4xx (مثل 403 forbidden یا 404 not found) — retry فایده نداره، همین الان برمیگردیم
             if e.status < 500:
-                print(f"❌ HTTP {e.status} از RapidAPI — retry نمیکنیم: {e.message}")
+                print(f"❌ HTTP {e.status} از RapidAPI")
                 return None
-
-            # خطای 5xx (مثل 500 یا 503) — سرور مشکل داره، ارزش داره دوباره امتحان کنیم
-            print(f"⚠️ HTTP {e.status} از RapidAPI — تلاش {attempt}/{MAX_RETRIES}")
+            print(f"⚠️ HTTP {e.status} — تلاش {attempt}/{MAX_RETRIES}")
 
         except (TimeoutError, aiohttp.ServerConnectionError):
-            # timeout یا قطعی اتصال — ممکنه موقتی باشه، دوباره امتحان میکنیم
             print(f"⏱ خطای اتصال — تلاش {attempt}/{MAX_RETRIES}")
 
         except Exception as e:
-            # هر خطای غیرمنتظره دیگه‌ای — retry فایده نداره
-            print(f"❌ خطای ناشناخته: {e}")
+            print(f"❌ خطا: {e}")
             return None
 
-        # اگه هنوز retry داریم، به اندازه delay صبر میکنیم (exponential backoff)
         if attempt < MAX_RETRIES:
-            delay = RETRY_DELAY * (2 ** (attempt - 1))  # تلاش ۱: ۱s — تلاش ۲: ۲s — تلاش ۳: ۴s
-            print(f"🔁 {delay} ثانیه صبر میکنیم...")
-            await asyncio.sleep(delay)  # async sleep — بقیه کاربرا رو block نمیکنه
+            delay = RETRY_DELAY * (2 ** (attempt - 1))
+            await asyncio.sleep(delay)
         else:
-            # همه retry‌ها تموم شد و هنوز موفق نشدیم
-            print("❌ همه تلاش‌ها ناموفق بود.")
+            print("❌ همه تلاش‌ها ناموفق بود")
             return None
 
-    # چک میکنه جواب API یه لیست باشه و خالی نباشه
     if not isinstance(data, list) or not data:
-        return None  # اگه داده‌ای نبود، None برمیگردونه
+        return None
 
-    # کپشن خام رو از اولین آیتم میخونه و به تابع format_caption میده تا تمیزش کنه
+    # دریافت کپشن
     raw_caption = data[0].get("meta", {}).get("title", "")
     caption = format_caption(raw_caption)
 
-    items = []  # لیست خالی برای نگه داشتن مدیاهایی که پیدا میکنیم
+    items = []
 
-    # روی همه آیتم‌های جواب API حلقه میزنه (هر آیتم = یه اسلاید از پست)
     for item in data:
-        urls = item.get("urls", [])           # لیست لینک‌های ویدیو (با کیفیت‌های مختلف)
-        picture_url = item.get("pictureUrl")  # لینک عکس (اگه ویدیو نباشه)
-        
-        # بررسی نوع مدیا از فیلدهای مختلف API
+        # روش اول: بررسی نوع مستقیم از فیلدهای API
         media_type = item.get("media_type") or item.get("type") or item.get("__typename", "")
         
-        # اگر صراحتاً ویدیو است
-        if media_type in ("Video", "video", "GraphVideo", "GraphSidecar", 2):
+        # تبدیل به string برای مقایسه راحت
+        media_type_str = str(media_type).lower()
+        
+        # چک کردن ویدیو
+        is_video = False
+        is_photo = False
+        
+        # بررسی بر اساس media_type
+        if media_type_str in ["video", "graphvideo", "2"]:
+            is_video = True
+        elif media_type_str in ["image", "graphimage", "1"]:
+            is_photo = True
+        
+        # اگر media_type مشخص نبود، بر اساس وجود urls یا pictureUrl تشخیص بده
+        urls = item.get("urls", [])
+        picture_url = item.get("pictureUrl")
+        
+        if not is_video and not is_photo:
             if urls:
-                best = max(urls, key=lambda x: x.get("quality", 0))
-                items.append({"type": "video", "url": best["url"]})
-                continue  # رد شدن از بقیه بررسی‌ها
+                is_video = True
+            elif picture_url:
+                is_photo = True
         
-        # اگر صراحتاً عکس است
-        if media_type in ("Image", "image", "GraphImage", 1):
-            if picture_url:
-                items.append({"type": "photo", "url": picture_url})
-                continue
-        
-        # حالت fallback: بررسی بر اساس وجود urls یا picture_url
-        if urls:
-            # این یک ویدیو است
+        # اضافه کردن به لیست items
+        if is_video and urls:
+            # انتخاب بهترین کیفیت ویدیو
             best = max(urls, key=lambda x: x.get("quality", 0))
             items.append({"type": "video", "url": best["url"]})
-        elif picture_url:
-            # فقط عکس
+            print(f"✅ ویدیو اضافه شد - کیفیت: {best.get('quality', 'unknown')}")
+            
+        elif is_photo and picture_url:
             items.append({"type": "photo", "url": picture_url})
-        # اگر هر دو نبود، نادیده گرفته میشه
+            print(f"✅ عکس اضافه شد")
+            
+        else:
+            print(f"⚠️ آیتم ناشناس: {list(item.keys())}")
 
-    # اگه چیزی پیدا شد dict برمیگردونه، وگرنه None
+    # دیباگ: نمایش نتیجه نهایی
+    print(f"\n📊 نتیجه نهایی: {len(items)} مدیا")
+    for i, item in enumerate(items):
+        print(f"  - {i+1}: {item['type']}")
+    print("=" * 50)
+
     return {"caption": caption, "items": items} if items else None
