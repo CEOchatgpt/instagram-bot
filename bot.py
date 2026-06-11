@@ -162,16 +162,24 @@ async def handle_highlight_callback(update: Update, context):
     query = update.callback_query
     await query.answer()
 
+    # استخراج امن اطلاعات بدون خراب شدن ساختار ID هایلایت
+    data = query.data # فرمت: hl:id:title
+    if not data.startswith("hl:"):
+        return
+
     try:
-        data_parts = query.data.split(":", 2)
-        highlight_id = data_parts[1]
-        title = data_parts[2] if len(data_parts) > 2 else "هایلایت"
+        # جدا کردن بر اساس اولین و دومین دونقطه
+        parts = data.split(":", 2)
+        highlight_id = parts[1]
+        title = parts[2] if len(parts) > 2 else "هایلایت"
     except Exception as e:
         logger.error(f"Callback split error: {e}")
         await query.edit_message_text("❌ خطای پردازش دکمه.")
         return
 
-    processing = await query.edit_message_text(f"📥 در حال دانلود «{title}»...")
+    processing = await query.edit_message_text(f"📥 در حال دانلود هایلایت «{title}»...")
+    
+    # ادامه روند دانلود...
 
     try:
         result = await get_instagram_highlight_stories(highlight_id, title)
