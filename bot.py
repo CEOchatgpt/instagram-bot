@@ -1,4 +1,4 @@
-# bot.py - نسخه کامل بازنویسی شده
+# bot.py - نسخه نهایی بدون خطا
 
 import aiohttp
 from io import BytesIO
@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 
 from telegram import (
-    Update, InputMediaVideo, InputMediaPhoto, InputMediaDocument,
+    Update, InputMediaPhoto, InputMediaDocument,
     InlineKeyboardButton, InlineKeyboardMarkup,
 )
 from telegram.ext import (
@@ -115,7 +115,7 @@ async def handle_link(update: Update, context):
                 [InlineKeyboardButton("📁 فایل (کیفیت اصلی)", callback_data="send_file")]
             ])
         else:
-            # کاروسل - آمار دقیق به کاربر نشان بده
+            # کاروسل
             photo_count = sum(1 for i in items if i["type"] == "photo")
             video_count = sum(1 for i in items if i["type"] == "video")
             
@@ -134,16 +134,6 @@ async def handle_link(update: Update, context):
     except Exception as e:
         logger.error(f"Error in handle_link: {e}")
         await processing_msg.edit_text("❌ خطایی رخ داد. دوباره امتحان کن.")
-
-
-async def download_media(url: str, filename: str):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            response.raise_for_status()
-            data = await response.read()
-            file_obj = BytesIO(data)
-            file_obj.name = filename
-            return file_obj
 
 
 async def handle_format_choice(update: Update, context):
@@ -188,7 +178,7 @@ async def handle_format_choice(update: Update, context):
                     caption=caption
                 )
         else:
-            # ========== کاروسل (چند رسانه) ==========
+            # ========== کاروسل ==========
             if choice == "send_photo":
                 # فقط عکس‌ها رو فیلتر کن
                 photo_items = [item for item in items if item["type"] == "photo"]
@@ -205,51 +195,33 @@ async def handle_format_choice(update: Update, context):
                 
                 # ارسال در دسته‌های حداکثر ۱۰ تایی
                 for i in range(0, len(media_group), 10):
-                    try:
-                        await context.bot.send_media_group(
-                            chat_id=update.effective_chat.id,
-                            media=media_group[i:i+10]
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending photo album: {e}")
-                        await sending_msg.edit_text(f"❌ خطا در ارسال آلبوم عکس: {str(e)[:50]}")
-                        return
+                    await context.bot.send_media_group(
+                        chat_id=update.effective_chat.id,
+                        media=media_group[i:i+10]
+                    )
                         
             else:  # send_file
-                # ارسال همه آیتم‌ها به صورت فایل (عکس و ویدیو با هم)
-                # توجه: نمی‌توان عکس و ویدیو را در یک media_group مخلوط کرد
-                # پس به صورت جداگانه ارسال می‌کنیم
+                # ارسال همه آیتم‌ها به صورت فایل جداگانه
+                first_item = True
                 
-                # اول ویدیوها رو بفرست
-                video_items = [item for item in items if item["type"] == "video"]
-                for i, item in enumerate(video_items):
-                    current_caption = caption if i == 0 and not photo_items else None
-                    try:
+                for item in items:
+                    current_caption = caption if first_item else None
+                    
+                    if item["type"] == "video":
                         await context.bot.send_video(
                             chat_id=update.effective_chat.id,
                             video=item["url"],
                             supports_streaming=True,
                             caption=current_caption
                         )
-                    except Exception as e:
-                        logger.error(f"Error sending video file: {e}")
-                        await sending_msg.edit_text(f"❌ خطا در ارسال ویدیو: {str(e)[:50]}")
-                        return
-                
-                # بعد عکس‌ها رو بفرست
-                photo_items = [item for item in items if item["type"] == "photo"]
-                for i, item in enumerate(photo_items):
-                    current_caption = caption if i == 0 and not video_items else None
-                    try:
+                    else:  # photo
                         await context.bot.send_document(
                             chat_id=update.effective_chat.id,
                             document=item["url"],
                             caption=current_caption
                         )
-                    except Exception as e:
-                        logger.error(f"Error sending photo file: {e}")
-                        await sending_msg.edit_text(f"❌ خطا در ارسال عکس: {str(e)[:50]}")
-                        return
+                    
+                    first_item = False
 
         await sending_msg.delete()
         context.user_data.pop("pending_result", None)
