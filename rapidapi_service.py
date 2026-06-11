@@ -162,3 +162,107 @@ async def get_instagram_story(username: str, story_id: str = None):
                 return {"caption": f"📖 استوری @{username}", "items": items}
     except:
         return None
+
+
+# به rapidapi_service.py اضافه کنید
+
+async def get_user_reels(username: str, max_id: str = ""):
+    """
+    دریافت لیست ریل‌های یک کاربر
+    Returns: {
+        "items": [{"id": "...", "url": "...", "caption": "...", "video_url": "..."}],
+        "next_max_id": "..."
+    }
+    """
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST,
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://{RAPIDAPI_HOST}/api/instagram/reels"
+            payload = {"username": username, "maxId": max_id}
+            
+            async with session.post(url, json=payload, headers=headers, timeout=25) as resp:
+                data = await resp.json()
+                result = data.get("result") or data
+                
+                if not result:
+                    return None
+                
+                items = []
+                reel_list = result.get("reels") or result.get("items") or result
+                
+                # اگه result لیست نیست و دیکشنری هست
+                if isinstance(reel_list, dict):
+                    # ممکنه ریل‌ها توی کلید media باشن
+                    reel_list = reel_list.get("media", []) or reel_list.get("items", []) or [reel_list]
+                
+                if isinstance(reel_list, list):
+                    for reel in reel_list:
+                        if not isinstance(reel, dict):
+                            continue
+                        
+                        # استخراج ویدیو با بهترین کیفیت
+                        video_url = None
+                        
+                        # روش اول: video_versions
+                        video_versions = reel.get("video_versions")
+                        if video_versions and isinstance(video_versions, list):
+                            best = max(video_versions, key=lambda x: x.get("height", 0) or x.get("width", 0))
+                            video_url = best.get("url")
+                        
+                        # روش دوم: video_url مستقیم
+                        if not video_url:
+                            video_url = reel.get("video_url")
+                        
+                        # روش سوم: clips
+                        if not video_url:
+                            clips = reel.get("clips", [])
+                            if clips and isinstance(clips, list):
+                                video_url = clips[0].get("url")
+                        
+                        if not video_url:
+                            continue
+                        
+                        # استخراج کپشن
+                        caption = reel.get("caption", "")
+                        if not caption:
+                            caption = reel.get("title", "")
+                        if not caption:
+                            caption = reel.get("text", "")
+                        
+                        # استخراج آیدی ریل
+                        reel_id = reel.get("id") or reel.get("pk") or reel.get("code")
+                        
+                        items.append({
+                            "id": reel_id,
+                            "url": video_url,
+                            "caption": caption[:200] if caption else "بدون کپشن",
+                            "thumbnail": reel.get("thumbnail_url") or reel.get("cover_url"),
+                            "like_count": reel.get("like_count", 0),
+                            "comment_count": reel.get("comment_count", 0),
+                            "play_count": reel.get("play_count", 0),
+                        })
+                
+                # گرفتن next_max_id برای صفحه‌بندی
+                next_max_id = result.get("next_max_id") or result.get("max_id") or ""
+                
+                return {
+                    "items": items,
+                    "next_max_id": next_max_id,
+                    "username": username
+                }
+                
+    except Exception as e:
+        logger.error(f"Error getting reels for {username}: {e}")
+        return None
+
+
+async def download_single_reel(reel_url: str):
+    """
+    دانلود یک ریل با لینک مستقیم (مثل پست معمولی)
+    """
+    return await get_instagram_media(reel_url)
