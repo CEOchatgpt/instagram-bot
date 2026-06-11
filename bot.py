@@ -180,9 +180,16 @@ async def handle_format_choice(update: Update, context):
         else:
             # ==================== کاروسل - آلبوم یکپارچه ====================
             if choice == "send_photo":
+                # فقط آیتم‌های عکس رو فیلتر کن (مهم برای رفع مشکل)
+                photo_items = [item for item in items if item["type"] == "photo"]
+                
+                if not photo_items:
+                    await sending_msg.edit_text("⚠️ این کاروسل فقط ویدیو دارد، لطفاً گزینه «فایل» را انتخاب کنید.")
+                    return
+                
                 # ارسال به صورت آلبوم (media group) — عکس‌های معمولی
                 media_group = []
-                for i, item in enumerate(items):
+                for i, item in enumerate(photo_items):
                     current_caption = caption if i == 0 else None
                     media_group.append(InputMediaPhoto(media=item["url"], caption=current_caption))
 
@@ -193,7 +200,7 @@ async def handle_format_choice(update: Update, context):
                         media=media_group[i:i+10]
                     )
             else:
-                # ارسال به صورت فایل (document)
+                # ارسال به صورت فایل (document) - همه آیتم‌ها (هم عکس هم ویدیو)
                 media_group = []
                 for i, item in enumerate(items):
                     c = caption if i == 0 else None
@@ -219,7 +226,6 @@ async def handle_format_choice(update: Update, context):
     except Exception as e:
         logger.error(f"Error sending: {e}")
         await sending_msg.edit_text(f"❌ خطا در ارسال: {str(e)}")
-
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
