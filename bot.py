@@ -589,7 +589,7 @@ async def handle_direct_input(update: Update, context):
     """هندلر برای ورودی مستقیم توی بات"""
     text = update.message.text.strip()
     
-    # اگه یوزرنیم بود (با @ شروع میشد)
+    # اول چک کن اگه با @ شروع شد -> یوزرنیم
     if text.startswith('@'):
         username = text.lstrip('@')
         keyboard = InlineKeyboardMarkup([
@@ -610,7 +610,7 @@ async def handle_direct_input(update: Update, context):
         )
         return
     
-    # اگه لینک بود
+    # بعد چک کن اگه لینک اینستاگرام بود
     if "instagram.com" in text:
         await handle_link(update, context)
         return
