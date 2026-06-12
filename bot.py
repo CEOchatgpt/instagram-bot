@@ -51,6 +51,31 @@ def is_rate_limited(user_id: int) -> tuple[bool, int]:
 
 
 async def start(update: Update, context):
+    """شروع ربات - پشتیبانی از دیپ لینک"""
+    
+    # چک کردن اگه پارامتر وجود داره
+    if context.args and len(context.args) > 0:
+        param = context.args[0]
+        
+        # پروفایل: start=profile_cristiano
+        if param.startswith("profile_"):
+            username = param.split("_")[1]
+            await profile_command(update, context, username=username)
+            return
+        
+        # ریلز: start=reels_cristiano
+        elif param.startswith("reels_"):
+            username = param.split("_")[1]
+            await reels_command(update, context, username=username)
+            return
+        
+        # هایلایت: start=highlights_cristiano
+        elif param.startswith("highlights_"):
+            username = param.split("_")[1]
+            await highlights_command(update, context, username=username)
+            return
+    
+    # اگر پارامتری نبود، منوی اصلی رو نشون بده
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 دانلود با لینک", callback_data="new_download")],
         [InlineKeyboardButton("👤 پروفایل", callback_data="show_profile_menu"),
@@ -531,18 +556,16 @@ async def handle_reel_callbacks(update: Update, context):
 
 
 async def inline_query(update: Update, context):
-    """هندلر جستجوی اینلاین"""
+    """هندلر جستجوی اینلاین - با دکمه باز کردن بات"""
     query = update.inline_query.query.strip()
     
-    # لاگ برای دیباگ
-    logger.info(f"📍 Inline query received: '{query}'")
-    print(f"📍 Inline query received: '{query}'")
+    bot_username = context.bot.username
     
-    # اگه چیزی تایپ نشده
     if not query:
-        logger.info("Empty query - answering with switch_pm_text")
         await update.inline_query.answer(
             [],
+            cache_time=60,
+            is_personal=True,
             switch_pm_text="🔍 یه یوزرنیم اینستا وارد کن...",
             switch_pm_parameter="start"
         )
@@ -558,60 +581,63 @@ async def inline_query(update: Update, context):
         await update.inline_query.answer([], cache_time=60)
         return
     
-    # ایجاد نتایج جستجو
     results = []
     
-    # 1. نتیجه برای پروفایل
+    # 1. نتیجه برای پروفایل (با دکمه باز کردن بات)
     results.append(InlineQueryResultArticle(
         id=str(uuid4()),
         title=f"👤 پروفایل {username}",
         description="مشاهده اطلاعات پروفایل، فالوورها، پست‌ها",
         thumbnail_url="https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
         input_message_content=InputTextMessageContent(
-            f"/profile {username}",
+            f"🔍 برای مشاهده پروفایل <b>@{username}</b> روی دکمه زیر کلیک کن 👇",
             parse_mode='HTML'
-        )
+        ),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "👤 مشاهده پروفایل", 
+                url=f"https://t.me/{bot_username}?start=profile_{username}"
+            )]
+        ])
     ))
     
-    # 2. نتیجه برای ریلز
+    # 2. نتیجه برای ریلز (با دکمه باز کردن بات)
     results.append(InlineQueryResultArticle(
         id=str(uuid4()),
         title=f"🎬 ریل‌های {username}",
         description="دریافت آخرین ریل‌ها",
         thumbnail_url="https://cdn-icons-png.flaticon.com/512/1384/1384069.png",
         input_message_content=InputTextMessageContent(
-            f"/reels {username}",
+            f"🎬 برای دریافت ریل‌های <b>@{username}</b> روی دکمه زیر کلیک کن 👇",
             parse_mode='HTML'
-        )
+        ),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🎬 دریافت ریل‌ها", 
+                url=f"https://t.me/{bot_username}?start=reels_{username}"
+            )]
+        ])
     ))
     
-    # 3. نتیجه برای هایلایت
+    # 3. نتیجه برای هایلایت (با دکمه باز کردن بات)
     results.append(InlineQueryResultArticle(
         id=str(uuid4()),
         title=f"📚 هایلایت‌های {username}",
         description="دریافت هایلایت‌های ذخیره شده",
         thumbnail_url="https://cdn-icons-png.flaticon.com/512/4353/4353480.png",
         input_message_content=InputTextMessageContent(
-            f"/highlights {username}",
+            f"📚 برای دریافت هایلایت‌های <b>@{username}</b> روی دکمه زیر کلیک کن 👇",
             parse_mode='HTML'
-        )
-    ))
+        ),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "📚 دریافت هایلایت‌ها", 
+                url=f"https://t.me/{bot_username}?start=highlights_{username}"
+            )]
+        ])
+    ]))
     
-    # اگه لینک اینستاگرام بود
-    if "instagram.com" in query:
-        results.append(InlineQueryResultArticle(
-            id=str(uuid4()),
-            title=f"📥 دانلود مستقیم",
-            description="دانلود محتوای این لینک",
-            thumbnail_url="https://cdn-icons-png.flaticon.com/512/860/860757.png",
-            input_message_content=InputTextMessageContent(query)
-        ))
-    
-    logger.info(f"📍 Answering with {len(results)} results for {username}")
-    print(f"📍 Answering with {len(results)} results for {username}")
-    
-    # فرستادن نتایج
-    await update.inline_query.answer(results, cache_time=60)
+    await update.inline_query.answer(results, cache_time=60, is_personal=True)
 
 
 async def handle_direct_input(update: Update, context):
