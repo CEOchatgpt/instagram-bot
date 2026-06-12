@@ -974,7 +974,32 @@ async def handle_callback(update: Update, context):
     
     elif data == "back_to_main":
         await start(update, context)
-        
+
+#حذف کش توسط ادمین 
+async def clear_cache_command(update: Update, context):
+    """پاک کردن کش (فقط برای ادمین)"""
+    user_id = update.effective_user.id
+    
+    # فقط ادمین (آیدی عددی خودت رو بذار)
+    ADMIN_ID = 123456789  # آیدی عددی خودت
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما دسترسی به این دستور ندارید.")
+        return
+    
+    if not redis_client:
+        await update.message.reply_text("❌ Redis در دسترس نیست.")
+        return
+    
+    # پاک کردن کلیدهای کش
+    keys = redis_client.keys("cache:*")
+    count = len(keys)
+    
+    for key in keys:
+        redis_client.delete(key)
+    
+    await update.message.reply_text(f"✅ {count} آیتم از کش پاک شد.")
+    
 
 def main():
     app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
@@ -986,11 +1011,13 @@ def main():
     app.add_handler(CommandHandler("highlights", highlights_command))
     app.add_handler(CommandHandler("reels", reels_command))
     app.add_handler(CommandHandler("stories", stories_command))
-    
+    #دسترسی پاک کردن کش توسط ادمین
+    app.add_handler(CommandHandler("clearcache", clear_cache_command))
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_input))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(InlineQueryHandler(inline_query))
-    
+
     logger.info("🤖 ربات در حال اجراست...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
