@@ -80,8 +80,8 @@ async def start(update: Update, context):
          InlineKeyboardButton("🎬 ریلز", callback_data="show_reels_menu")],
         [InlineKeyboardButton("📚 هایلایت", callback_data="show_highlights_menu"),
          InlineKeyboardButton("📖 استوری", callback_data="show_stories_menu")],
-         [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings"),
-         InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
+         [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings")],
+         [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
     ])
                     
 
