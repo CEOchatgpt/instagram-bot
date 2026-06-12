@@ -13,7 +13,7 @@ async def test_profile():
         "Content-Type": "application/json"
     }
     
-    username = "instagram"  # یا هر یوزری که میخوای
+    username = "cristiano"  # یا هر یوزری که میخوای
     
     async with aiohttp.ClientSession() as session:
         url = f"https://{RAPIDAPI_HOST}/api/instagram/userInfo"
