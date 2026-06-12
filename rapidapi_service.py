@@ -60,39 +60,44 @@ def format_caption(raw) -> str:
 
 
 async def get_instagram_profile(username: str):
-    """دریافت اطلاعات پروفایل کاربر"""
+    """دریافت اطلاعات پروفایل کاربر - استفاده از userInfo endpoint"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
         "Content-Type": "application/json"
     }
     
-    for ep in ["/api/instagram/userInfo", "/api/instagram/profile"]:
-        try:
-            async with aiohttp.ClientSession() as session:
-                url = f"https://{RAPIDAPI_HOST}{ep}"
-                async with session.post(url, json={"username": username}, headers=headers, timeout=20) as resp:
-                    data = await resp.json()
-                    result = data.get("result") or data
-                    if not isinstance(result, dict):
-                        continue
-                    
-                    return {
-                        "username": result.get("username") or username,
-                        "full_name": result.get("full_name") or result.get("name") or username,
-                        "biography": result.get("biography", "بدون بیو"),
-                        "followers": result.get("follower_count") or result.get("followers_count") or 0,
-                        "following": result.get("following_count") or 0,
-                        "posts": result.get("media_count") or 0,
-                        "profile_pic": result.get("profile_pic_url_hd") or result.get("profile_pic_url"),
-                        "is_private": result.get("is_private", False),
-                        "is_verified": result.get("is_verified", False),
-                    }
-        except Exception as e:
-            logger.error(f"Error in {ep}: {e}")
-            continue
-    
-    return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            # فقط از userInfo استفاده کن (این فیلدهای شمارنده رو داره)
+            url = f"https://{RAPIDAPI_HOST}/api/instagram/userInfo"
+            async with session.post(url, json={"username": username}, headers=headers, timeout=20) as resp:
+                data = await resp.json()
+                
+                # لاگ برای دیباگ
+                logger.info(f"userInfo response for {username}")
+                
+                result = data.get("result") or data
+                
+                # اطلاعات کاربر معمولاً توی فیلد "user" هست
+                user_data = result.get("user", result)
+                
+                # استخراج اطلاعات
+                return {
+                    "username": user_data.get("username") or username,
+                    "full_name": user_data.get("full_name") or user_data.get("fullName") or username,
+                    "biography": user_data.get("biography") or user_data.get("bio") or "بدون بیو",
+                    "followers": user_data.get("follower_count", 0),      # اینجا باید عدد بیاد
+                    "following": user_data.get("following_count", 0),     # اینجا باید عدد بیاد
+                    "posts": user_data.get("media_count", 0),             # اینجا باید عدد بیاد
+                    "profile_pic": user_data.get("profile_pic_url_hd") or user_data.get("profile_pic_url"),
+                    "is_private": user_data.get("is_private", False),
+                    "is_verified": user_data.get("is_verified", False),
+                }
+                
+    except Exception as e:
+        logger.error(f"Error in get_instagram_profile: {e}")
+        return None
 
 
 async def get_instagram_highlights(username: str):
