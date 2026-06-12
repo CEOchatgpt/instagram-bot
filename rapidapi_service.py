@@ -274,8 +274,7 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     return result
     
 
-async def get_instagram_highlight_stories(highlight_id: str, username: str = None, title: str = "Highlight"):
-    """دریافت استوری‌های یک هایلایت"""
+async def get_instagram_highlight_stories(highlight_id: str, username: str = None, title: str = "Highlight", context=None):
     clean_id = highlight_id
     if highlight_id and ":" in str(highlight_id):
         clean_id = str(highlight_id).split(":")[-1]
@@ -283,7 +282,7 @@ async def get_instagram_highlight_stories(highlight_id: str, username: str = Non
     highlight_url = f"https://www.instagram.com/stories/highlights/{clean_id}/"
     logger.info(f"Fetching highlight: {highlight_url}")
     
-    return await get_instagram_media(highlight_url)
+    return await get_instagram_media(highlight_url, context)
 
 
 async def get_instagram_story(username: str, story_id: str = None):
