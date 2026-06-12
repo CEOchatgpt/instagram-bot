@@ -685,67 +685,102 @@ async def handle_callback(update: Update, context):
     data = query.data
     user_id = update.effective_user.id
     
-    # ========== بازگشت به منوی انتخاب ==========
-    if data == "back_to_username_menu":
-        username = context.user_data.get('last_username')
-        if username:
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("👤 پروفایل", callback_data=f"quick_profile_{username}"),
-                    InlineKeyboardButton("🎬 ریلز", callback_data=f"quick_reels_{username}")
-                ],
-                [
-                    InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
-                    InlineKeyboardButton("❌ لغو", callback_data="back_to_main")
-                ]
-            ])
-            await query.edit_message_text(
+# ========== بازگشت به منوی انتخاب ==========
+if data == "back_to_username_menu":
+    username = context.user_data.get('last_username')
+    if username:
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("👤 پروفایل", callback_data=f"quick_profile_{username}"),
+                InlineKeyboardButton("🎬 ریلز", callback_data=f"quick_reels_{username}")
+            ],
+            [
+                InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
+                InlineKeyboardButton("❌ لغو", callback_data="back_to_main")
+            ]
+        ])
+        
+        # چک کن پیام عکس داره یا متن
+        try:
+            # اگه پیام عکس یا ویدیو داره
+            if query.message.photo or query.message.video:
+                await query.edit_message_caption(
+                    caption=f"🔍 <b>{username}</b>\n\nکدوم اطلاعات رو میخوای؟",
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+            else:
+                # اگه پیام متنی هست
+                await query.edit_message_text(
+                    f"🔍 <b>{username}</b>\n\nکدوم اطلاعات رو میخوای؟",
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+        except Exception as e:
+            # اگه هر دو روش خطا داد، یه پیام جدید بفرست
+            await query.message.reply_text(
                 f"🔍 <b>{username}</b>\n\nکدوم اطلاعات رو میخوای؟",
                 parse_mode='HTML',
                 reply_markup=keyboard
             )
-        else:
-            await query.edit_message_text(
-                "🔙 به منوی اصلی برگشتی.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")]
-                ])
-            )
-        return
-    
-    # ========== بازگشت به لیست هایلایت‌ها ==========
-    if data == "back_to_highlights_list":
-        username = context.user_data.get('last_username')
-        if username:
-            processing = await query.message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
+            await query.message.delete()  # پیام قبلی رو پاک کن
+    else:
+        await query.edit_message_text(
+            "🔙 به منوی اصلی برگشتی.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")]
+            ])
+        )
+    return
+
+# ========== بازگشت به لیست هایلایت‌ها ==========
+if data == "back_to_highlights_list":
+    username = context.user_data.get('last_username')
+    if username:
+        processing = await query.message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
+        try:
+            highlights_list = await get_instagram_highlights(username)
+            if not highlights_list:
+                await processing.edit_text(f"❌ هیچ هایلایتی برای @{username} پیدا نشد.")
+                return
+            context.user_data['current_highlights'] = highlights_list
+            keyboard = []
+            for i, h in enumerate(highlights_list[:20]):
+                title = h.get("title", "هایلایت")
+                count = h.get("count", 0)
+                button_text = f"📚 {title[:30]}" + (f" ({count})" if count else "")
+                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"hl_{i}")])
+            keyboard.append([InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")])
+            
+            # چک کن پیام عکس داره یا متن
             try:
-                highlights_list = await get_instagram_highlights(username)
-                if not highlights_list:
-                    await processing.edit_text(f"❌ هیچ هایلایتی برای @{username} پیدا نشد.")
-                    return
-                context.user_data['current_highlights'] = highlights_list
-                keyboard = []
-                for i, h in enumerate(highlights_list[:20]):
-                    title = h.get("title", "هایلایت")
-                    count = h.get("count", 0)
-                    button_text = f"📚 {title[:30]}" + (f" ({count})" if count else "")
-                    keyboard.append([InlineKeyboardButton(button_text, callback_data=f"hl_{i}")])
-                keyboard.append([InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")])
+                if query.message.photo or query.message.video:
+                    await query.edit_message_caption(
+                        caption=f"📚 هایلایت‌های @{username}:",
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    await query.edit_message_text(
+                        f"📚 هایلایت‌های @{username}:",
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+            except:
                 await processing.edit_text(
                     f"📚 هایلایت‌های @{username}:",
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
-            except Exception as e:
-                await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
-        else:
-            await query.edit_message_text(
-                "🔙 به منوی اصلی برگشتی.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")]
-                ])
-            )
-        return
-    
+        except Exception as e:
+            await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
+    else:
+        await query.edit_message_text(
+            "🔙 به منوی اصلی برگشتی.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 منوی اصلی", callback_data="back_to_main")]
+            ])
+        )
+    return
+
+
     # ========== دکمه‌های سریع ==========
     if data.startswith("quick_profile_"):
         username = data.split("_")[2]
