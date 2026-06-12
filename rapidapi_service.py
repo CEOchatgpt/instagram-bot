@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
+from database import redis_client 
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,17 @@ def format_caption(raw) -> str:
 
 
 async def get_instagram_profile(username: str):
-    """دریافت اطلاعات پروفایل کاربر - نسخه نهایی"""
+    """دریافت پروفایل - با پشتیبانی از کش"""
+    
+    # مرحله 1: چک کن توی کش هست؟
+    cached = get_cached_profile(username)
+    if cached:
+        logger.info(f"📦 پروفایل {username} از کش برگردانده شد")
+        return cached
+    
+    # مرحله 2: اگه نبود، از API بگیر
+    logger.info(f"🌐 پروفایل {username} در کش نبود - ارسال درخواست به API")
+    
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -69,30 +80,21 @@ async def get_instagram_profile(username: str):
     
     try:
         async with aiohttp.ClientSession() as session:
-            # استفاده از userInfo endpoint
             url = f"https://{RAPIDAPI_HOST}/api/instagram/userInfo"
             async with session.post(url, json={"username": username}, headers=headers, timeout=20) as resp:
                 data = await resp.json()
                 
-                # ساختار پاسخ: data["result"] لیستی از کاربران هست
                 result_list = data.get("result", [])
-                
                 if not result_list or not isinstance(result_list, list):
-                    logger.error(f"Unexpected response structure for {username}")
                     return None
                 
-                # اولین آیتم توی لیست رو بردار
                 first_result = result_list[0] if result_list else {}
-                
-                # اطلاعات کاربر توی "user" هست
                 user_data = first_result.get("user", {})
                 
                 if not user_data:
-                    logger.error(f"No user data found for {username}")
                     return None
                 
-                # استخراج اطلاعات
-                return {
+                profile = {
                     "username": user_data.get("username") or username,
                     "full_name": user_data.get("full_name") or username,
                     "biography": user_data.get("biography") or "بدون بیو",
@@ -103,6 +105,11 @@ async def get_instagram_profile(username: str):
                     "is_private": user_data.get("is_private", False),
                     "is_verified": user_data.get("is_verified", False),
                 }
+                
+                # مرحله 3: ذخیره توی کش برای دفعه بعد
+                set_cached_profile(username, profile, ttl_seconds=3600)  # 1 ساعت
+                
+                return profile
                 
     except Exception as e:
         logger.error(f"Error in get_instagram_profile: {e}")
@@ -148,21 +155,28 @@ async def get_instagram_highlights(username: str):
 
 
 async def get_instagram_media(post_url: str) -> dict | None:
-    """دریافت محتوای پست از لینک مستقیم - پشتیبانی از channel"""
+    """دریافت محتوای پست - با پشتیبانی از کش"""
+    
     if not post_url or "instagram.com" not in post_url:
         return None
-
-    # پشتیبانی از لینک‌های channel
+    
+    # مرحله 1: چک کن توی کش هست؟
+    cached = get_cached_media(post_url)
+    if cached:
+        logger.info(f"📦 مدیا {post_url[:50]}... از کش برگردانده شد")
+        return cached
+    
+    # مرحله 2: اگه نبود، از API بگیر
+    logger.info(f"🌐 مدیا در کش نبود - ارسال درخواست به API")
+    
     channel_match = re.search(r'instagram\.com/channel/([^/]+)/?(\d+)?', post_url)
     if channel_match:
         logger.info(f"Channel URL detected: {post_url}")
-        # برای channel، از endpoint جداگانه استفاده می‌کنیم یا همان روش معمولی
-        pass
-
+    
     story_match = re.search(r'instagram\.com/stories/([^/]+)/?(\d+)?', post_url)
     if story_match:
         return await get_instagram_story(story_match.group(1), story_match.group(2))
-
+    
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -203,7 +217,13 @@ async def get_instagram_media(post_url: str) -> dict | None:
         else:
             items.append({"type": "photo", "url": best["url"]})
     
-    return {"caption": caption, "items": items} if items else None
+    result = {"caption": caption, "items": items} if items else None
+    
+    # مرحله 3: ذخیره توی کش برای دفعه بعد
+    if result:
+        set_cached_media(post_url, result, ttl_seconds=7200)  # 2 ساعت
+    
+    return result
 
 
 async def get_instagram_highlight_stories(highlight_id: str, username: str = None, title: str = "Highlight"):
@@ -386,4 +406,47 @@ async def check_and_get_stories(username: str):
     except Exception as e:
         logger.error(f"Error checking stories for {username}: {e}")
         return None
+
+# اینا برای اضافه کردن کش به سرور هست تا از درخواست های مصرفی جلوگیری بشه
+def get_cached_profile(username: str):
+    """دریافت پروفایل از کش"""
+    if not redis_client:
+        return None
+    key = f"cache:profile:{username}"
+    data = redis_client.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+def set_cached_profile(username: str, profile_data: dict, ttl_seconds: int = 3600):
+    """ذخیره پروفایل در کش (پیشفرض ۱ ساعت)"""
+    if not redis_client:
+        return
+    key = f"cache:profile:{username}"
+    redis_client.setex(key, ttl_seconds, json.dumps(profile_data))
+    logger.info(f"✅ پروفایل {username} در کش ذخیره شد (TTL: {ttl_seconds}s)")
+
+def get_cached_media(media_url: str):
+    """دریافت مدیا از کش"""
+    if not redis_client:
+        return None
+    # تبدیل لینک به یک کلید ساده
+    import hashlib
+    key_hash = hashlib.md5(media_url.encode()).hexdigest()
+    key = f"cache:media:{key_hash}"
+    data = redis_client.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+def set_cached_media(media_url: str, media_data: dict, ttl_seconds: int = 7200):
+    """ذخیره مدیا در کش (پیشفرض ۲ ساعت)"""
+    if not redis_client:
+        return
+    import hashlib
+    key_hash = hashlib.md5(media_url.encode()).hexdigest()
+    key = f"cache:media:{key_hash}"
+    redis_client.setex(key, ttl_seconds, json.dumps(media_data))
+    logger.info(f"✅ مدیا در کش ذخیره شد (TTL: {ttl_seconds}s)")
+
 
