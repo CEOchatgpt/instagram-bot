@@ -635,7 +635,7 @@ async def inline_query(update: Update, context):
                 url=f"https://t.me/{bot_username}?start=highlights_{username}"
             )]
         ])
-    ]))
+    ))
     
     await update.inline_query.answer(results, cache_time=60, is_personal=True)
 
