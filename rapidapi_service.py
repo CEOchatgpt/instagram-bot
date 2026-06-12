@@ -60,7 +60,7 @@ def format_caption(raw) -> str:
 
 
 async def get_instagram_profile(username: str):
-    """دریافت اطلاعات پروفایل کاربر - استفاده از userInfo endpoint"""
+    """دریافت اطلاعات پروفایل کاربر - نسخه نهایی"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -69,28 +69,37 @@ async def get_instagram_profile(username: str):
     
     try:
         async with aiohttp.ClientSession() as session:
-            # فقط از userInfo استفاده کن (این فیلدهای شمارنده رو داره)
+            # استفاده از userInfo endpoint
             url = f"https://{RAPIDAPI_HOST}/api/instagram/userInfo"
             async with session.post(url, json={"username": username}, headers=headers, timeout=20) as resp:
                 data = await resp.json()
                 
-                # لاگ برای دیباگ
-                logger.info(f"userInfo response for {username}")
+                # ساختار پاسخ: data["result"] لیستی از کاربران هست
+                result_list = data.get("result", [])
                 
-                result = data.get("result") or data
+                if not result_list or not isinstance(result_list, list):
+                    logger.error(f"Unexpected response structure for {username}")
+                    return None
                 
-                # اطلاعات کاربر معمولاً توی فیلد "user" هست
-                user_data = result.get("user", result)
+                # اولین آیتم توی لیست رو بردار
+                first_result = result_list[0] if result_list else {}
+                
+                # اطلاعات کاربر توی "user" هست
+                user_data = first_result.get("user", {})
+                
+                if not user_data:
+                    logger.error(f"No user data found for {username}")
+                    return None
                 
                 # استخراج اطلاعات
                 return {
                     "username": user_data.get("username") or username,
-                    "full_name": user_data.get("full_name") or user_data.get("fullName") or username,
-                    "biography": user_data.get("biography") or user_data.get("bio") or "بدون بیو",
-                    "followers": user_data.get("follower_count", 0),      # اینجا باید عدد بیاد
-                    "following": user_data.get("following_count", 0),     # اینجا باید عدد بیاد
-                    "posts": user_data.get("media_count", 0),             # اینجا باید عدد بیاد
-                    "profile_pic": user_data.get("profile_pic_url_hd") or user_data.get("profile_pic_url"),
+                    "full_name": user_data.get("full_name") or username,
+                    "biography": user_data.get("biography") or "بدون بیو",
+                    "followers": user_data.get("follower_count", 0),
+                    "following": user_data.get("following_count", 0),
+                    "posts": user_data.get("media_count", 0),
+                    "profile_pic": user_data.get("hd_profile_pic_url_info", {}).get("url") or user_data.get("profile_pic_url"),
                     "is_private": user_data.get("is_private", False),
                     "is_verified": user_data.get("is_verified", False),
                 }
