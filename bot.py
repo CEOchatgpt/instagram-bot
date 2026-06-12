@@ -17,7 +17,7 @@ from telegram.ext import (
     InlineQueryHandler
 )
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_ID
 from rapidapi_service import (
     get_instagram_media,
     get_instagram_profile,
@@ -980,9 +980,6 @@ async def handle_callback(update: Update, context):
 async def clear_cache_command(update: Update, context):
     """پاک کردن کش (فقط برای ادمین)"""
     user_id = update.effective_user.id
-    
-    # فقط ادمین (آیدی عددی خودت رو بذار)
-    ADMIN_ID = os.environ.get("ADMIN_ID")  # آیدی عددی خودت
     
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ شما دسترسی به این دستور ندارید.")
