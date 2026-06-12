@@ -469,8 +469,7 @@ async def help_command(update: Update, context):
         "   /reels @username - دریافت ریل‌ها\n"
         "   /highlights @username - دریافت هایلایت‌ها\n"
         "   /settings - تنظیمات ارسال\n"
-        "   /help - این راهنما\n\n"
-        "<i>ساخته شده با ❤️</i>",
+        "   /help - این راهنما",
         parse_mode='HTML'
     )
 
