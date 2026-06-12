@@ -23,3 +23,11 @@ if not RAPIDAPI_KEY:
     raise ValueError("❌ متغیر RAPIDAPI_KEY تنظیم نشده!")
 if not ADMIN_ID:
     print("⚠️ هشدار: متغیر ADMIN_ID تنظیم نشده! دستورات ادمین کار نخواهند کرد.")
+
+
+# کانال دیتابیس (برای ذخیره دائمی لینک‌ها)
+DATABASE_CHANNEL_ID = os.environ.get("DATABASE_CHANNEL_ID")  # مثال: -1001234567890
+
+if not DATABASE_CHANNEL_ID:
+    print("⚠️ هشدار: DATABASE_CHANNEL_ID تنظیم نشده! کش دائمی غیرفعال است.")
+
