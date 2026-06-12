@@ -588,7 +588,7 @@ async def inline_query(update: Update, context):
         id=str(uuid4()),
         title=f"👤 پروفایل {username}",
         description="مشاهده اطلاعات پروفایل، فالوورها، پست‌ها",
-        thumbnail_url="https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
+        #thumbnail_url="https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
         input_message_content=InputTextMessageContent(
             f"🔍 برای مشاهده پروفایل <b>@{username}</b> روی دکمه زیر کلیک کن 👇",
             parse_mode='HTML'
@@ -606,7 +606,7 @@ async def inline_query(update: Update, context):
         id=str(uuid4()),
         title=f"🎬 ریل‌های {username}",
         description="دریافت آخرین ریل‌ها",
-        thumbnail_url="https://cdn-icons-png.flaticon.com/512/1384/1384069.png",
+        #thumbnail_url="https://cdn-icons-png.flaticon.com/512/1384/1384069.png",
         input_message_content=InputTextMessageContent(
             f"🎬 برای دریافت ریل‌های <b>@{username}</b> روی دکمه زیر کلیک کن 👇",
             parse_mode='HTML'
@@ -624,7 +624,7 @@ async def inline_query(update: Update, context):
         id=str(uuid4()),
         title=f"📚 هایلایت‌های {username}",
         description="دریافت هایلایت‌های ذخیره شده",
-        thumbnail_url="https://cdn-icons-png.flaticon.com/512/4353/4353480.png",
+        #thumbnail_url="https://cdn-icons-png.flaticon.com/512/4353/4353480.png",
         input_message_content=InputTextMessageContent(
             f"📚 برای دریافت هایلایت‌های <b>@{username}</b> روی دکمه زیر کلیک کن 👇",
             parse_mode='HTML'
