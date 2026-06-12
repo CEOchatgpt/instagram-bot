@@ -5,7 +5,7 @@ import logging
 import time
 from collections import defaultdict
 from uuid import uuid4
-import os
+from database import redis_client
 
 from telegram import (
     Update, InputMediaVideo, InputMediaPhoto,
@@ -18,6 +18,7 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN, ADMIN_ID
+
 from rapidapi_service import (
     get_instagram_media,
     get_instagram_profile,
