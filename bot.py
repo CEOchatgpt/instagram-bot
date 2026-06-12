@@ -370,6 +370,9 @@ async def send_media_group(chat_id, context, items, caption):
 async def show_settings_menu(update: Update, context, query=None):
     user_id = update.effective_user.id
     current_mode = get_user_default_mode(user_id)
+    
+    # اضافه کردن timestamp برای جلوگیری از خطای "not modified"
+    import time
     mode_text = "🎬 آلبوم ترکیبی" if current_mode == "album" else "📁 فایل (جداگانه)"
     
     text = (
@@ -377,12 +380,20 @@ async def show_settings_menu(update: Update, context, query=None):
         f"حالت فعلی: {mode_text}\n\n"
         f"📌 <b>توضیحات:</b>\n"
         f"• آلبوم ترکیبی: چند رسانه در یک پیام\n"
-        f"• فایل جداگانه: هر رسانه به صورت جداگانه"
+        f"• فایل جداگانه: هر رسانه به صورت جداگانه\n\n"
+        f"<i>🕐 آخرین بروزرسانی: {time.strftime('%H:%M:%S')}</i>"  # این خط رو اضافه کن
     )
     keyboard = get_user_settings_keyboard(user_id)
     
     if query:
-        await query.edit_message_text(text, parse_mode='HTML', reply_markup=keyboard)
+        try:
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=keyboard)
+        except Exception as e:
+            # اگه خطای "not modified" خورد، پیغام جدید بفرست
+            if "Message is not modified" in str(e):
+                await query.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+            else:
+                raise e
     else:
         await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
 
@@ -544,9 +555,13 @@ async def handle_callback(update: Update, context):
         await show_settings_menu(update, context, query)
     
     elif data == "set_mode_file":
-        set_user_default_mode(user_id, "file")
+        result = set_user_default_mode(user_id, "file")
+        if result:
+            print(f"✅ حالت کاربر {user_id} به file تغییر کرد")
+        else:
+            print(f"❌ خطا در تغییر حالت کاربر {user_id}")
         await show_settings_menu(update, context, query)
-    
+
     elif data == "back_to_main":
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🚀 دانلود جدید", callback_data="new_download")],
