@@ -344,3 +344,46 @@ async def get_user_reels_v2(username: str):
     except Exception as e:
         logger.error(f"Error in get_user_reels_v2 for {username}: {e}")
         return None
+
+async def check_and_get_stories(username: str):
+    """بررسی و دریافت استوری‌های کاربر"""
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST,
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://{RAPIDAPI_HOST}/api/instagram/stories"
+            async with session.post(url, json={"username": username}, headers=headers, timeout=20) as resp:
+                data = await resp.json()
+                stories = data.get("result") if isinstance(data, dict) else None
+                
+                if not stories or not isinstance(stories, list) or len(stories) == 0:
+                    return None
+                
+                items = []
+                for story in stories:
+                    if not isinstance(story, dict):
+                        continue
+                    
+                    # چک کردن ویدیو
+                    video_versions = story.get("video_versions") or story.get("video")
+                    if video_versions and isinstance(video_versions, list) and video_versions:
+                        best = max(video_versions, key=lambda x: x.get("height", 0) or 0)
+                        items.append({"type": "video", "url": best.get("url")})
+                        continue
+                    
+                    # چک کردن عکس
+                    candidates = story.get("image_versions2", {}).get("candidates", [])
+                    if candidates:
+                        best = max(candidates, key=lambda x: x.get("height", 0))
+                        items.append({"type": "photo", "url": best.get("url")})
+                
+                return items if items else None
+                
+    except Exception as e:
+        logger.error(f"Error checking stories for {username}: {e}")
+        return None
+
