@@ -4,10 +4,12 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
+from uuid import uuid4
 
 from telegram import (
     Update, InputMediaVideo, InputMediaPhoto,
     InlineKeyboardButton, InlineKeyboardMarkup,
+    InlineQueryResultArticle, InputTextMessageContent,
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters,
@@ -537,9 +539,24 @@ async def handle_callback(update: Update, context):
         await handle_reel_callbacks(update, context)
         return
     
-    if data.startswith("hl_"):
+    elif data.startswith("hl_"):
         await handle_highlight_callback(update, context)
         return
+
+    elif data.startswith("quick_profile_"):
+    username = data.split("_")[2]
+    await query.message.delete()
+    await profile_command(update, context, username=username)
+
+    elif data.startswith("quick_reels_"):
+        username = data.split("_")[2]
+        await query.message.delete()
+        await reels_command(update, context, username=username)
+    
+    elif data.startswith("quick_highlights_"):
+        username = data.split("_")[2]
+        await query.message.delete()
+        await highlights_command(update, context, username=username)
     
     if data == "new_download":
         await query.edit_message_text("📎 لطفاً لینک اینستاگرام خود را ارسال کنید:")
@@ -575,6 +592,101 @@ async def handle_callback(update: Update, context):
             reply_markup=keyboard
         )
 
+async def inline_query(update: Update, context):
+    """هندلر جستجوی اینلاین - کاربر توی باکس چت تایپ میکنه"""
+    query = update.inline_query.query.strip()
+    
+    # اگه چیزی تایپ نشده
+    if not query:
+        await update.inline_query.answer(
+            [],
+            switch_pm_text="🔍 یه یوزرنیم اینستا وارد کن...",
+            switch_pm_parameter="start"
+        )
+        return
+    
+    # حذف @ از اول یوزرنیم
+    username = query.lstrip('@')
+    
+    # ایجاد نتایج جستجو
+    results = []
+    
+    # 1. نتیجه برای پروفایل
+    results.append(InlineQueryResultArticle(
+        id=str(uuid4()),
+        title=f"👤 پروفایل {username}",
+        description="مشاهده اطلاعات پروفایل، فالوورها، پست‌ها",
+        thumb_url="https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
+        input_message_content=InputTextMessageContent(
+            f"/profile {username}"
+        )
+    ))
+    
+    # 2. نتیجه برای ریلز
+    results.append(InlineQueryResultArticle(
+        id=str(uuid4()),
+        title=f"🎬 ریل‌های {username}",
+        description="دریافت آخرین ریل‌ها",
+        thumb_url="https://cdn-icons-png.flaticon.com/512/1384/1384069.png",
+        input_message_content=InputTextMessageContent(
+            f"/reels {username}"
+        )
+    ))
+    
+    # 3. نتیجه برای هایلایت
+    results.append(InlineQueryResultArticle(
+        id=str(uuid4()),
+        title=f"📚 هایلایت‌های {username}",
+        description="دریافت هایلایت‌های ذخیره شده",
+        thumb_url="https://cdn-icons-png.flaticon.com/512/4353/4353480.png",
+        input_message_content=InputTextMessageContent(
+            f"/highlights {username}"
+        )
+    ))
+    
+    # 4. نتیجه برای دانلود مستقیم (اگه لینک باشه)
+    if "instagram.com" in query:
+        results.append(InlineQueryResultArticle(
+            id=str(uuid4()),
+            title=f"📥 دانلود مستقیم",
+            description="دانلود محتوای این لینک",
+            thumb_url="https://cdn-icons-png.flaticon.com/512/860/860757.png",
+            input_message_content=InputTextMessageContent(query)
+        ))
+    
+    # فرستادن نتایج به تلگرام
+    await update.inline_query.answer(results, cache_time=60)
+
+async def handle_direct_input(update: Update, context):
+    """هندلر برای ورودی مستقیم توی بات"""
+    text = update.message.text.strip()
+    
+    # اگه فقط یه کلمه بود (احتمالاً یوزرنیم)
+    if " " not in text and "@" in text:
+        username = text.lstrip('@')
+        
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("👤 پروفایل", callback_data=f"quick_profile_{username}"),
+                InlineKeyboardButton("🎬 ریلز", callback_data=f"quick_reels_{username}")
+            ],
+            [
+                InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
+                InlineKeyboardButton("❌ لغو", callback_data="cancel")
+            ]
+        ])
+        
+        await update.message.reply_text(
+            f"🔍 <b>{username}</b>\n\nکدوم اطلاعات رو میخوای؟",
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+        return
+    
+    # اگه لینک بود
+    await handle_link(update, context)
+
+
 
 def main():
     app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
@@ -588,6 +700,9 @@ def main():
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
     app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(InlineQueryHandler(inline_query))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_input))
+
     
     logger.info("🤖 ربات در حال اجراست...")
     print("🤖 ربات در حال اجراست...")
