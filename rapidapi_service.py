@@ -352,7 +352,30 @@ async def get_instagram_highlight_stories(highlight_id: str, username: str = Non
 
 
 async def check_and_get_stories(username: str, context=None):
-    """بررسی و دریافت استوری‌های کاربر (بدون کش، چون استوری موقته)"""
+    """بررسی و دریافت استوری‌های کاربر با کش در Redis و کانال"""
+    
+    story_key = f"story:{username}:latest"
+    
+    # لایه 1: چک کش Redis
+    cached = get_cached_media(story_key)
+    if cached:
+        logger.info(f"📦 استوری‌های {username} از Redis کش برگردانده شد")
+        return cached
+    
+    # لایه 2: چک کش کانال
+    if context:
+        try:
+            channel_cached = await get_media_from_channel(context, story_key)
+            if channel_cached:
+                logger.info(f"🏦 استوری‌های {username} از کانال دیتابیس برگردانده شد")
+                set_cached_media(story_key, channel_cached, ttl_seconds=1800)  # 30 دقیقه
+                return channel_cached
+        except Exception as e:
+            logger.warning(f"خطا در خواندن استوری از کانال: {e}")
+    
+    # لایه 3: از API بگیر
+    logger.info(f"🌐 استوری‌های {username} در کش نبود - ارسال درخواست به API")
+    
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -367,6 +390,7 @@ async def check_and_get_stories(username: str, context=None):
                 stories = data.get("result") if isinstance(data, dict) else None
                 
                 if not stories or not isinstance(stories, list) or len(stories) == 0:
+                    logger.info(f"⚠️ کاربر {username} استوری ندارد")
                     return None
                 
                 items = []
@@ -374,18 +398,33 @@ async def check_and_get_stories(username: str, context=None):
                     if not isinstance(story, dict):
                         continue
                     
+                    # چک کردن ویدیو
                     video_versions = story.get("video_versions") or story.get("video")
                     if video_versions and isinstance(video_versions, list) and video_versions:
                         best = max(video_versions, key=lambda x: x.get("height", 0) or 0)
                         items.append({"type": "video", "url": best.get("url")})
                         continue
                     
+                    # چک کردن عکس
                     candidates = story.get("image_versions2", {}).get("candidates", [])
                     if candidates:
                         best = max(candidates, key=lambda x: x.get("height", 0))
                         items.append({"type": "photo", "url": best.get("url")})
                 
-                return items if items else None
+                result = items if items else None
+                
+                # ذخیره در کش (استوری‌ها زود منقضی میشن، TTL کم)
+                if result:
+                    # ذخیره در Redis با TTL 30 دقیقه
+                    set_cached_media(story_key, result, ttl_seconds=1800)
+                    
+                    # ذخیره در کانال تلگرام
+                    if context:
+                        story_data = {"caption": f"📖 استوری‌های @{username}", "items": result}
+                        await save_media_to_channel(context, story_key, story_data)
+                        logger.info(f"✅ استوری‌های {username} در کانال دیتابیس ذخیره شد")
+                
+                return result
                 
     except Exception as e:
         logger.error(f"Error checking stories for {username}: {e}")
