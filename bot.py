@@ -560,30 +560,6 @@ async def handle_callback(update: Update, context):
             reply_markup=keyboard
         )
 
-async def send_hls_video(chat_id, context, hls_url, caption):
-    """ارسال ویدیو HLS (تلگرام خودش پشتیبانی می‌کنه)"""
-    try:
-        # تلگرام می‌تونه مستقیم لینک HLS رو پخش کنه
-        await context.bot.send_video(
-            chat_id=chat_id,
-            video=hls_url,
-            caption=caption,
-            supports_streaming=True,
-            height=1080,  # کیفیت بالا
-            width=1920
-        )
-        return True
-    except:
-        return False
-
-# و توی handle_link:
-if item.get("is_hls"):
-    await send_hls_video(update.effective_chat.id, context, item["url"], caption)
-else:
-    # کد قبلی برای MP4
-    await context.bot.send_video(...)
-
-
 
 def main():
     app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
@@ -600,7 +576,7 @@ def main():
     
     logger.info("🤖 ربات در حال اجراست...")
     print("🤖 ربات در حال اجراست...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
