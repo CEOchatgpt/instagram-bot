@@ -531,10 +531,16 @@ async def handle_reel_callbacks(update: Update, context):
 
 
 async def inline_query(update: Update, context):
-    """هندلر جستجوی اینلاین - کاربر توی باکس چت تایپ میکنه"""
+    """هندلر جستجوی اینلاین"""
     query = update.inline_query.query.strip()
     
+    # لاگ برای دیباگ
+    logger.info(f"📍 Inline query received: '{query}'")
+    print(f"📍 Inline query received: '{query}'")
+    
+    # اگه چیزی تایپ نشده
     if not query:
+        logger.info("Empty query - answering with switch_pm_text")
         await update.inline_query.answer(
             [],
             switch_pm_text="🔍 یه یوزرنیم اینستا وارد کن...",
@@ -542,37 +548,56 @@ async def inline_query(update: Update, context):
         )
         return
     
+    # حذف @ از اول یوزرنیم
     username = query.lstrip('@')
+    
+    # فقط حروف مجاز رو نگه دار
+    username = ''.join(c for c in username if c.isalnum() or c == '_')
+    
+    if not username:
+        await update.inline_query.answer([], cache_time=60)
+        return
+    
+    # ایجاد نتایج جستجو
     results = []
     
-    # نتیجه برای پروفایل
+    # 1. نتیجه برای پروفایل
     results.append(InlineQueryResultArticle(
         id=str(uuid4()),
         title=f"👤 پروفایل {username}",
         description="مشاهده اطلاعات پروفایل، فالوورها، پست‌ها",
         thumb_url="https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
-        input_message_content=InputTextMessageContent(f"/profile {username}")
+        input_message_content=InputTextMessageContent(
+            f"/profile {username}",
+            parse_mode='HTML'
+        )
     ))
     
-    # نتیجه برای ریلز
+    # 2. نتیجه برای ریلز
     results.append(InlineQueryResultArticle(
         id=str(uuid4()),
         title=f"🎬 ریل‌های {username}",
         description="دریافت آخرین ریل‌ها",
         thumb_url="https://cdn-icons-png.flaticon.com/512/1384/1384069.png",
-        input_message_content=InputTextMessageContent(f"/reels {username}")
+        input_message_content=InputTextMessageContent(
+            f"/reels {username}",
+            parse_mode='HTML'
+        )
     ))
     
-    # نتیجه برای هایلایت
+    # 3. نتیجه برای هایلایت
     results.append(InlineQueryResultArticle(
         id=str(uuid4()),
         title=f"📚 هایلایت‌های {username}",
         description="دریافت هایلایت‌های ذخیره شده",
         thumb_url="https://cdn-icons-png.flaticon.com/512/4353/4353480.png",
-        input_message_content=InputTextMessageContent(f"/highlights {username}")
+        input_message_content=InputTextMessageContent(
+            f"/highlights {username}",
+            parse_mode='HTML'
+        )
     ))
     
-    # اگه لینک بود
+    # اگه لینک اینستاگرام بود
     if "instagram.com" in query:
         results.append(InlineQueryResultArticle(
             id=str(uuid4()),
@@ -582,6 +607,10 @@ async def inline_query(update: Update, context):
             input_message_content=InputTextMessageContent(query)
         ))
     
+    logger.info(f"📍 Answering with {len(results)} results for {username}")
+    print(f"📍 Answering with {len(results)} results for {username}")
+    
+    # فرستادن نتایج
     await update.inline_query.answer(results, cache_time=60)
 
 
