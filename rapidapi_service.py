@@ -7,6 +7,9 @@ import json
 import logging
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 from database import redis_client 
+from channel_cache import get_profile_from_channel, save_profile_to_channel, get_media_from_channel, save_media_to_channel
+
+from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
@@ -60,16 +63,29 @@ def format_caption(raw) -> str:
     return text
 
 
-async def get_instagram_profile(username: str):
-    """دریافت پروفایل - با پشتیبانی از کش"""
+async def get_instagram_profile(username: str, context=None):
+    """دریافت پروفایل - کش دو لایه (Redis + کانال تلگرام)"""
     
-    # مرحله 1: چک کن توی کش هست؟
+    # لایه 1: کش Redis (سریع، موقت)
     cached = get_cached_profile(username)
     if cached:
-        logger.info(f"📦 پروفایل {username} از کش برگردانده شد")
+        logger.info(f"📦 پروفایل {username} از Redis کش برگردانده شد")
         return cached
     
-    # مرحله 2: اگه نبود، از API بگیر
+    # لایه 2: کش دائمی (کانال تلگرام) - فقط اگه context وجود داشته باشه
+    if context:
+        try:
+            from channel_cache import get_profile_from_channel
+            channel_cached = await get_profile_from_channel(context, username)
+            if channel_cached:
+                logger.info(f"🏦 پروفایل {username} از کانال دیتابیس برگردانده شد")
+                # ذخیره در Redis برای دفعات بعد
+                set_cached_profile(username, channel_cached, ttl_seconds=3600)
+                return channel_cached
+        except Exception as e:
+            logger.warning(f"خطا در خواندن از کانال دیتابیس: {e}")
+    
+    # لایه 3: API (فقط برای محتوای جدید)
     logger.info(f"🌐 پروفایل {username} در کش نبود - ارسال درخواست به API")
     
     headers = {
@@ -106,8 +122,16 @@ async def get_instagram_profile(username: str):
                     "is_verified": user_data.get("is_verified", False),
                 }
                 
-                # مرحله 3: ذخیره توی کش برای دفعه بعد
-                set_cached_profile(username, profile, ttl_seconds=3600)  # 1 ساعت
+                # ذخیره در کش Redis
+                set_cached_profile(username, profile, ttl_seconds=3600)
+                
+                # ذخیره در کانال تلگرام (دائمی) - فقط اگه context وجود داشته باشه
+                if context:
+                    try:
+                        from channel_cache import save_profile_to_channel
+                        await save_profile_to_channel(context, username, profile)
+                    except Exception as e:
+                        logger.warning(f"خطا در ذخیره در کانال دیتابیس: {e}")
                 
                 return profile
                 
