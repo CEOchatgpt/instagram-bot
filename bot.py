@@ -544,9 +544,9 @@ async def handle_callback(update: Update, context):
         return
 
     elif data.startswith("quick_profile_"):
-    username = data.split("_")[2]
-    await query.message.delete()
-    await profile_command(update, context, username=username)
+        username = data.split("_")[2]
+        await query.message.delete()
+        await profile_command(update, context, username=username)
 
     elif data.startswith("quick_reels_"):
         username = data.split("_")[2]
