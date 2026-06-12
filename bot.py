@@ -13,6 +13,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters,
+    InlineQueryHandler
 )
 
 from config import BOT_TOKEN
