@@ -178,29 +178,51 @@ async def get_instagram_highlights(username: str):
         return []
 
 
-async def get_instagram_media(post_url: str) -> dict | None:
-    """دریافت محتوای پست - با پشتیبانی از کش"""
+async def get_instagram_media(post_url: str, context=None) -> dict | None:
+    """دریافت محتوای پست - کش دو لایه (Redis + کانال تلگرام)"""
     
     if not post_url or "instagram.com" not in post_url:
         return None
     
-    # مرحله 1: چک کن توی کش هست؟
+    # لایه 1: کش Redis (سریع، موقت)
     cached = get_cached_media(post_url)
     if cached:
-        logger.info(f"📦 مدیا {post_url[:50]}... از کش برگردانده شد")
+        logger.info(f"📦 مدیا {post_url[:50]}... از Redis کش برگردانده شد")
         return cached
     
-    # مرحله 2: اگه نبود، از API بگیر
-    logger.info(f"🌐 مدیا در کش نبود - ارسال درخواست به API")
+    # لایه 2: کش دائمی (کانال تلگرام)
+    if context:
+        try:
+            channel_cached = await get_media_from_channel(context, post_url)
+            if channel_cached:
+                logger.info(f"🏦 مدیا {post_url[:50]}... از کانال دیتابیس برگردانده شد")
+                # ذخیره در Redis برای دفعات بعد
+                set_cached_media(post_url, channel_cached, ttl_seconds=7200)
+                return channel_cached
+        except Exception as e:
+            logger.warning(f"خطا در خواندن مدیا از کانال: {e}")
     
-    channel_match = re.search(r'instagram\.com/channel/([^/]+)/?(\d+)?', post_url)
-    if channel_match:
-        logger.info(f"Channel URL detected: {post_url}")
+    # لایه 3: API (فقط برای محتوای جدید)
+    logger.info(f"🌐 مدیا {post_url[:50]}... در کش نبود - ارسال درخواست به API")
     
+    # تشخیص استوری
     story_match = re.search(r'instagram\.com/stories/([^/]+)/?(\d+)?', post_url)
     if story_match:
-        return await get_instagram_story(story_match.group(1), story_match.group(2))
+        result = await get_instagram_story(story_match.group(1), story_match.group(2))
+        if result and result.get("items"):
+            if context:
+                await save_media_to_channel(context, post_url, result)
+            set_cached_media(post_url, result, ttl_seconds=7200)
+        return result
     
+    # تشخیص هایلایت
+    highlight_match = re.search(r'instagram\.com/stories/highlights/([^/]+)/?', post_url)
+    if highlight_match:
+        clean_id = highlight_match.group(1)
+        highlight_url = f"https://www.instagram.com/stories/highlights/{clean_id}/"
+        return await get_instagram_media(highlight_url, context)
+    
+    # API اصلی برای لینک‌های معمولی
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -243,12 +265,14 @@ async def get_instagram_media(post_url: str) -> dict | None:
     
     result = {"caption": caption, "items": items} if items else None
     
-    # مرحله 3: ذخیره توی کش برای دفعه بعد
+    # ذخیره در هر دو لایه کش
     if result:
-        set_cached_media(post_url, result, ttl_seconds=7200)  # 2 ساعت
+        set_cached_media(post_url, result, ttl_seconds=7200)  # Redis
+        if context:
+            await save_media_to_channel(context, post_url, result)  # کانال تلگرام
     
     return result
-
+    
 
 async def get_instagram_highlight_stories(highlight_id: str, username: str = None, title: str = "Highlight"):
     """دریافت استوری‌های یک هایلایت"""
@@ -472,5 +496,89 @@ def set_cached_media(media_url: str, media_data: dict, ttl_seconds: int = 7200):
     key = f"cache:media:{key_hash}"
     redis_client.setex(key, ttl_seconds, json.dumps(media_data))
     logger.info(f"✅ مدیا در کش ذخیره شد (TTL: {ttl_seconds}s)")
+
+# ========== توابع کمکی برای مدیا کش دو لایه ==========
+
+async def get_media_from_channel(context, media_url: str):
+    """بازیابی مدیا از کانال تلگرام"""
+    from config import DATABASE_CHANNEL_ID
+    if not DATABASE_CHANNEL_ID or not context:
+        return None
+    
+    if not redis_client:
+        return None
+    
+    try:
+        url_hash = hashlib.md5(media_url.encode()).hexdigest()
+        key = f"channel_media:{url_hash}"
+        message_id = redis_client.get(key)
+        
+        if not message_id:
+            return None
+        
+        message_id = int(message_id)
+        
+        msg = await context.bot.forward_message(
+            chat_id=DATABASE_CHANNEL_ID,
+            from_chat_id=DATABASE_CHANNEL_ID,
+            message_id=message_id
+        )
+        
+        if msg.text and "📦" in msg.text:
+            start = msg.text.find("{")
+            end = msg.text.rfind("}")
+            if start != -1 and end != -1:
+                json_str = msg.text[start:end+1]
+                data = json.loads(json_str)
+                return data.get("data")
+                
+    except Exception as e:
+        logger.warning(f"خطا در بازیابی مدیا از کانال: {e}")
+        if redis_client:
+            url_hash = hashlib.md5(media_url.encode()).hexdigest()
+            redis_client.delete(f"channel_media:{url_hash}")
+        return None
+    
+    return None
+
+async def save_media_to_channel(context, media_url: str, media_data: dict):
+    """ذخیره مدیا در کانال تلگرام"""
+    from config import DATABASE_CHANNEL_ID
+    if not DATABASE_CHANNEL_ID or not context:
+        return None
+    
+    try:
+        url_hash = hashlib.md5(media_url.encode()).hexdigest()
+        
+        # چک کن قبلاً ذخیره شده؟
+        if redis_client and redis_client.exists(f"channel_media:{url_hash}"):
+            logger.info(f"📦 مدیا قبلاً در کانال ذخیره شده، اسکیپ")
+            return None
+        
+        message_data = {
+            "type": "media",
+            "url": media_url,
+            "data": media_data,
+            "hash": url_hash,
+            "created_at": time.time()
+        }
+        
+        message_text = f"📦 #MEDIA_{url_hash[:8]}\n{json.dumps(message_data, ensure_ascii=False)}"
+        
+        msg = await context.bot.send_message(
+            chat_id=DATABASE_CHANNEL_ID,
+            text=message_text[:4090],
+            disable_web_page_preview=True
+        )
+        
+        if redis_client:
+            redis_client.setex(f"channel_media:{url_hash}", 2592000, str(msg.message_id))
+        
+        logger.info(f"✅ مدیا در کانال دیتابیس ذخیره شد (message_id: {msg.message_id})")
+        return msg.message_id
+        
+    except Exception as e:
+        logger.error(f"❌ خطا در ذخیره مدیا در کانال: {e}")
+        return None
 
 
