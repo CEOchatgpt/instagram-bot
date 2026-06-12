@@ -360,7 +360,7 @@ async def handle_highlight_callback(update: Update, context):
     processing = await query.edit_message_text(f"📥 در حال دانلود هایلایت «{title}»...")
     
     try:
-        result = await get_instagram_highlight_stories(highlight_id, None, title)
+        result = await get_instagram_highlight_stories(highlight_id, None, title, context)
         
         if not result or not result.get("items"):
             await processing.edit_text(f"❌ هایلایت «{title}» محتوا ندارد.")
