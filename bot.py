@@ -576,7 +576,7 @@ def main():
     
     logger.info("🤖 ربات در حال اجراست...")
     print("🤖 ربات در حال اجراست...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
