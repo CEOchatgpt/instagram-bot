@@ -6,6 +6,8 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 RAPIDAPI_HOST = "instagram120.p.rapidapi.com"
 
+admin = os.environ.get("ADMIN_ID")
+
 if not BOT_TOKEN:
     raise ValueError("❌ متغیر BOT_TOKEN تنظیم نشده!")
 if not RAPIDAPI_KEY:
