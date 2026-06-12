@@ -6,6 +6,7 @@ import time
 from collections import defaultdict
 from uuid import uuid4
 from database import redis_client
+from channel_cache import save_profile_to_channel, get_profile_from_channel
 
 from telegram import (
     Update, InputMediaVideo, InputMediaPhoto,
@@ -117,7 +118,7 @@ async def profile_command(update: Update, context, username=None):
     processing = await update.effective_message.reply_text(f"📊 در حال دریافت پروفایل @{username}...")
 
     try:
-        profile = await get_instagram_profile(username)
+        profile = await get_instagram_profile(username, context)
         
         if not profile:
             await processing.edit_text("❌ نتونستم پروفایل رو پیدا کنم.")
