@@ -300,7 +300,7 @@ async def show_reel_item(update: Update, context, username: str, index: int):
     
     if "instagram.com/channel/" in video_url:
         logger.info(f"Channel URL detected, trying to convert: {video_url}")
-        media_result = await get_instagram_media(video_url)
+        media_result = await get_instagram_media(video_url, context)
         if media_result and media_result.get("items"):
             video_url = media_result["items"][0]["url"]
     
@@ -603,7 +603,7 @@ async def handle_link(update: Update, context):
     processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
 
     try:
-        result = await get_instagram_media(url)
+        result = await get_instagram_media(url, context)
         
         if not result or not result.get("items"):
             await processing_msg.edit_text("❌ نتونستم محتوا رو پیدا کنم.")
