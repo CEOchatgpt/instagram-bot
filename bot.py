@@ -660,6 +660,9 @@ async def handle_direct_input(update: Update, context):
             ],
             [
                 InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
+                InlineKeyboardButton("📖 استوری", callback_data=f"quick_stories_{username}")
+            ],
+            [
                 InlineKeyboardButton("❌ لغو", callback_data="back_to_main")
             ]
         ])
@@ -696,6 +699,9 @@ async def handle_callback(update: Update, context):
                 ],
                 [
                     InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
+                    InlineKeyboardButton("📖 استوری", callback_data=f"quick_stories_{username}")
+                ],
+                [
                     InlineKeyboardButton("❌ لغو", callback_data="back_to_main")
                 ]
             ])
