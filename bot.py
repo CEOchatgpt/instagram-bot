@@ -68,6 +68,10 @@ async def start(update: Update, context):
             username = param.split("_")[1]
             await highlights_command(update, context, username=username)
             return
+        elif param.startswith("stories_"):
+            username = param.split("_")[1]
+            await stories_command(update, context, username=username)
+            return
     
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 دانلود با لینک", callback_data="new_download")],
@@ -471,6 +475,79 @@ async def help_command(update: Update, context):
 async def settings_command(update: Update, context):
     await show_settings_menu(update, context)
 
+async def stories_command(update: Update, context, username=None):
+    """دریافت استوری‌های کاربر"""
+    if username is None:
+        if not context.args:
+            await update.effective_message.reply_text(
+                "⚠️ نحوه استفاده:\n<code>/stories username</code>\n\nمثال: /stories cristiano",
+                parse_mode='HTML'
+            )
+            return
+        username = context.args[0].strip("@")
+    
+    context.user_data['last_username'] = username
+    processing = await update.effective_message.reply_text(f"📖 در حال بررسی استوری‌های @{username}...")
+
+    try:
+        items = await check_and_get_stories(username)
+        
+        if not items or len(items) == 0:
+            await processing.edit_text(
+                f"❌ <b>@{username}</b> استوری ندارد یا پیج خصوصی است.\n\n"
+                f"💡 استوری‌ها فقط ۲۴ ساعت روی پروفایل می‌مانند.",
+                parse_mode='HTML'
+            )
+            return
+        
+        caption = f"📖 استوری‌های @{username}"
+        
+        # دکمه بازگشت
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")]
+        ])
+        
+        if len(items) == 1:
+            item = items[0]
+            try:
+                if item["type"] == "video":
+                    await context.bot.send_video(
+                        chat_id=update.effective_chat.id,
+                        video=item["url"],
+                        caption=caption,
+                        supports_streaming=True,
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=item["url"],
+                        caption=caption,
+                        reply_markup=reply_markup
+                    )
+            except Exception as e:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=item["url"],
+                    caption=caption,
+                    reply_markup=reply_markup
+                )
+        else:
+            # چند استوری - به صورت آلبوم بفرست
+            await send_media_group(update.effective_chat.id, context, items, caption)
+            # یه پیام جداگانه با دکمه بازگشت
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"✅ {len(items)} استوری از @{username} ارسال شد.\n\n🔙 برای بازگشت به منوی انتخاب کلیک کن:",
+                reply_markup=reply_markup
+            )
+        
+        await processing.delete()
+
+    except Exception as e:
+        logger.error(f"Error in stories_command: {e}")
+        await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
+
 
 async def handle_link(update: Update, context):
     url = update.message.text.strip()
@@ -642,6 +719,19 @@ async def inline_query(update: Update, context):
             [InlineKeyboardButton("📚 دریافت هایلایت‌ها", url=f"https://t.me/{bot_username}?start=highlights_{username}")]
         ])
     ))
+
+    results.append(InlineQueryResultArticle(
+        id=str(uuid4()),
+        title=f"{username}",
+        description="مشاهده استوری‌های ۲۴ ساعت اخیر",
+        input_message_content=InputTextMessageContent(
+            f"📖 برای مشاهده استوری‌های <b>@{username}</b> روی دکمه زیر کلیک کن 👇",
+            parse_mode='HTML'
+        ),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📖 مشاهده استوری‌ها", url=f"https://t.me/{bot_username}?start=stories_{username}")]
+        ])
+    ))
     
     await update.inline_query.answer(results, cache_time=60, is_personal=True)
 
@@ -786,6 +876,12 @@ async def handle_callback(update: Update, context):
         await query.message.delete()
         await highlights_command(update, context, username=username)
         return
+
+    elif data.startswith("quick_stories_"):
+        username = data.split("_")[2]
+        await query.message.delete()
+        await stories_command(update, context, username=username)
+        return
     
     # ========== دکمه‌های منو ==========
     elif data == "show_profile_menu":
@@ -847,6 +943,7 @@ def main():
     app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("highlights", highlights_command))
     app.add_handler(CommandHandler("reels", reels_command))
+    app.add_handler(CommandHandler("stories", stories_command))
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_input))
     app.add_handler(CallbackQueryHandler(handle_callback))
