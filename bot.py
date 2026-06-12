@@ -79,10 +79,12 @@ async def start(update: Update, context):
         [InlineKeyboardButton("👤 پروفایل", callback_data="show_profile_menu"),
          InlineKeyboardButton("🎬 ریلز", callback_data="show_reels_menu")],
         [InlineKeyboardButton("📚 هایلایت", callback_data="show_highlights_menu"),
-         InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings")],
-        [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
+         InlineKeyboardButton("📖 استوری", callback_data="show_stories_menu")],
+         [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings"),
+         InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
     ])
-    
+                    
+
     await update.effective_message.reply_text(
         f"<b>👋 سلام {update.effective_user.first_name}!</b>\n\n"
         f"به ربات دانلود اینستاگرام خوش اومدی 🎉\n\n"
@@ -902,6 +904,13 @@ async def handle_callback(update: Update, context):
     elif data == "show_highlights_menu":
         await query.edit_message_text(
             "📚 <b>هایلایت</b>\n\nلطفاً یوزرنیم رو با @ وارد کن:\nمثال: <code>@cristiano</code>",
+            parse_mode='HTML'
+        )
+        return
+
+    elif data == "show_stories_menu":
+        await query.edit_message_text(
+            "📖 <b>استوری</b>\n\nلطفاً یوزرنیم رو با @ وارد کن:\nمثال: <code>@cristiano</code>",
             parse_mode='HTML'
         )
         return
