@@ -559,6 +559,39 @@ async def handle_link(update: Update, context):
         await update.message.reply_text("❌ فقط لینک اینستاگرام قبول میکنم!")
         return
 
+    # ========== تشخیص لینک صفحه اصلی پیج ==========
+    import re
+    # الگوی لینک صفحه اصلی (بدون /p/, /reel/, /stories/, /tv/)
+    profile_pattern = r'(?:https?://)?(?:www\.)?instagram\.com/([a-zA-Z0-9_.]+)/?$'
+    match = re.search(profile_pattern, url)
+    
+    if match and not re.search(r'/(p|reel|stories|tv|highlights)/', url):
+        username = match.group(1)
+        context.user_data['last_username'] = username
+        
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("👤 پروفایل", callback_data=f"quick_profile_{username}"),
+                InlineKeyboardButton("🎬 ریلز", callback_data=f"quick_reels_{username}")
+            ],
+            [
+                InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
+                InlineKeyboardButton("📖 استوری", callback_data=f"quick_stories_{username}")
+            ],
+            [
+                InlineKeyboardButton("❌ لغو", callback_data="back_to_main")
+            ]
+        ])
+        
+        await update.message.reply_text(
+            f"🔍 <b>{username}</b>\n\nکدوم اطلاعات رو میخوای؟",
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+        return
+    
+    # ========== ادامه کد قبلی برای لینک‌های معمولی ==========
+    
     limited, wait = is_rate_limited(user_id)
     if limited:
         await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
