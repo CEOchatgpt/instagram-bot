@@ -180,7 +180,7 @@ async def reels_command(update: Update, context, username=None):
     processing_msg = await update.effective_message.reply_text(f"🎬 در حال دریافت ریل‌های @{username}...")
     
     try:
-        result = await get_user_reels_v2(username)
+        result = await get_user_reels_v2(username, context)
         
         if not result or not result.get("items"):
             await processing_msg.edit_text(f"❌ هیچ ریلی برای @{username} پیدا نشد.")
@@ -222,7 +222,7 @@ async def highlights_command(update: Update, context, username=None):
     processing = await update.effective_message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
 
     try:
-        highlights_list = await get_instagram_highlights(username)
+        highlights_list = await get_instagram_highlights(username, context)
 
         if not highlights_list:
             await processing.edit_text(f"❌ هیچ هایلایتی برای @{username} پیدا نشد.")
@@ -495,7 +495,7 @@ async def stories_command(update: Update, context, username=None):
     processing = await update.effective_message.reply_text(f"📖 در حال بررسی استوری‌های @{username}...")
 
     try:
-        items = await check_and_get_stories(username)
+        items = await check_and_get_stories(username, context)
         
         if not items or len(items) == 0:
             await processing.edit_text(
