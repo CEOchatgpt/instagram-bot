@@ -539,11 +539,11 @@ async def handle_callback(update: Update, context):
         await handle_reel_callbacks(update, context)
         return
     
-    elif data.startswith("hl_"):
+    if data.startswith("hl_"):
         await handle_highlight_callback(update, context)
         return
 
-    elif data.startswith("quick_profile_"):
+    if data.startswith("quick_profile_"):
         username = data.split("_")[2]
         await query.message.delete()
         await profile_command(update, context, username=username)
@@ -558,7 +558,7 @@ async def handle_callback(update: Update, context):
         await query.message.delete()
         await highlights_command(update, context, username=username)
     
-    if data == "new_download":
+    elif data == "new_download":
         await query.edit_message_text("📎 لطفاً لینک اینستاگرام خود را ارسال کنید:")
     
     elif data == "show_settings":
