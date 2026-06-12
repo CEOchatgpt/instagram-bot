@@ -134,21 +134,10 @@ async def get_instagram_highlights(username: str):
 
 
 async def get_instagram_media(post_url: str) -> dict | None:
+    """دریافت محتوای پست از لینک مستقیم - پشتیبانی از channel"""
     if not post_url or "instagram.com" not in post_url:
         return None
 
-    # اول سعی کن HLS بگیر (کیفیت بهتر)
-    hls_data = await get_hls_stream(post_url)
-    if hls_data:
-        return {
-            "caption": "🎬 ویدیو با کیفیت HLS",
-            "items": [{"type": "video", "url": hls_data["url"], "is_hls": True}],
-            "is_hls": True
-        }
-    
-    # اگه HLS نداشت، برو سراغ روش قبلی
-    # ... کد قبلی ات اینجا میاد ...
-    
     # پشتیبانی از لینک‌های channel
     channel_match = re.search(r'instagram\.com/channel/([^/]+)/?(\d+)?', post_url)
     if channel_match:
@@ -340,33 +329,4 @@ async def get_user_reels_v2(username: str):
         return None
     except Exception as e:
         logger.error(f"Error in get_user_reels_v2 for {username}: {e}")
-        return None
-
-async def get_hls_stream(post_url: str) -> dict | None:
-    """گرفتن لینک HLS با کیفیت بالا"""
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": RAPIDAPI_HOST,
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://{RAPIDAPI_HOST}/api/instagram/hls"
-            async with session.post(url, json={"url": post_url}, headers=headers, timeout=20) as resp:
-                data = await resp.json()
-                
-                # بررسی وجود لینک HLS
-                if data and isinstance(data, dict):
-                    hls_url = data.get("result", {}).get("hls_url") or data.get("hls_url")
-                    if hls_url:
-                        return {
-                            "type": "hls",
-                            "url": hls_url,
-                            "quality": data.get("quality", "high"),
-                            "duration": data.get("duration", 0)
-                        }
-        return None
-    except Exception as e:
-        logger.error(f"HLS error: {e}")
         return None
