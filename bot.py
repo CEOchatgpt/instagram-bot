@@ -5,6 +5,7 @@ import logging
 import time
 from collections import defaultdict
 from uuid import uuid4
+import os
 
 from telegram import (
     Update, InputMediaVideo, InputMediaPhoto,
@@ -981,7 +982,7 @@ async def clear_cache_command(update: Update, context):
     user_id = update.effective_user.id
     
     # فقط ادمین (آیدی عددی خودت رو بذار)
-    ADMIN_ID = 123456789  # آیدی عددی خودت
+    ADMIN_ID = os.environ.get("ADMIN_ID")  # آیدی عددی خودت
     
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ شما دسترسی به این دستور ندارید.")
