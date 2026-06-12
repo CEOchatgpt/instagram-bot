@@ -101,9 +101,57 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_url: 
         logger.error(f"❌ خطا در بازیابی از کانال: {e}")
         return None
 
-async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: str, profile_data: dict):
-    """ذخیره پروفایل در کانال"""
-    return await save_media_to_channel(context, f"profile:{username}", profile_data, "profile")
+async def save_profile_to_channel(context, username: str, profile_data: dict):
+    """ذخیره پروفایل در کانال تلگرام"""
+    from config import DATABASE_CHANNEL_ID
+    
+    if not DATABASE_CHANNEL_ID:
+        return None
+    
+    try:
+        # تولید یک کلید یکتا برای این پروفایل
+        import time
+        import hashlib
+        
+        # ایجاد محتوای پیام با ساختار بهتر
+        message_data = {
+            "type": "profile",
+            "username": username,
+            "data": profile_data,
+            "created_at": time.time()
+        }
+        
+        # هش برای بررسی یکتا بودن
+        data_hash = hashlib.md5(json.dumps(profile_data, sort_keys=True).encode()).hexdigest()
+        
+        # چک کن قبلاً این پروفایل ذخیره شده؟
+        if redis_client:
+            existing = redis_client.get(f"channel_profile_hash:{username}")
+            if existing and existing.decode() == data_hash:
+                logger.info(f"📦 پروفایل {username} قبلاً در کانال ذخیره شده، اسکیپ")
+                return None
+        
+        # ارسال پیام به کانال
+        message_text = f"📦 #PROFILE_{username.upper()}\n{json.dumps(message_data, ensure_ascii=False)}"
+        
+        msg = await context.bot.send_message(
+            chat_id=DATABASE_CHANNEL_ID,
+            text=message_text[:4090],
+            disable_web_page_preview=True
+        )
+        
+        # ذخیره ایندکس در Redis
+        if redis_client:
+            redis_client.setex(f"channel_profile:{username}", 2592000, str(msg.message_id))
+            redis_client.setex(f"channel_profile_hash:{username}", 2592000, data_hash)
+        
+        logger.info(f"✅ پروفایل {username} در کانال دیتابیس ذخیره شد (message_id: {msg.message_id})")
+        return msg.message_id
+        
+    except Exception as e:
+        logger.error(f"❌ خطا در ذخیره پروفایل {username} در کانال: {e}")
+        return None
+
 
 async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username: str):
     """بازیابی پروفایل از کانال"""
