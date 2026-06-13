@@ -1,16 +1,19 @@
-# user_settings.py - نسخه جدید با SQLite
-from database import get_user_mode, set_user_mode
+# user_settings.py - بدون Redis
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+# ذخیره موقت تنظیمات در حافظه
+_user_modes = {}  # user_id -> mode
+
 def get_user_default_mode(user_id: int) -> str:
-    """دریافت حالت پیشفرض کاربر"""
-    return get_user_mode(user_id)
+    """دریافت حالت پیشفرض کاربر از حافظه"""
+    return _user_modes.get(user_id, "album")
 
 def set_user_default_mode(user_id: int, mode: str) -> bool:
-    """تنظیم حالت پیشفرض کاربر"""
+    """تنظیم حالت پیشفرض کاربر در حافظه"""
     if mode not in ["album", "file"]:
         return False
-    set_user_mode(user_id, mode)
+    _user_modes[user_id] = mode
     return True
 
 def get_user_settings_keyboard(user_id: int):
