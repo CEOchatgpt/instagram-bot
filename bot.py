@@ -934,9 +934,10 @@ async def handle_direct_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             if direct_download_url:
                 await save_file_to_channel(
                     context=context,
-                    instagram_url=clean_url,
-                    direct_download_url=direct_download_url,
-                    media_type=cache_media_type
+                    instagram_url=clean_url,  # لینک اصلی اینستاگرام
+                    direct_download_url=direct_download_url,  # لینک دانلود مستقیم
+                    media_type=cache_media_type,
+                    caption=caption or ""
                 )
 
         except Exception as e:
