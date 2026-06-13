@@ -1,4 +1,4 @@
-# index_manager.py - مدیریت ایندکس برای پیدا کردن محتوا در کانال
+# index_manager.py - نسخه اصلاح شده بدون خطا
 
 import json
 import os
@@ -8,20 +8,16 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# مسیر فایل ایندکس
 INDEX_FILE = "channel_index.json"
-
-# کش حافظه برای ایندکس (برای سرعت)
 _index_cache = None
 _cache_time = 0
-CACHE_TTL = 60  # 1 دقیقه کش برای ایندکس
+CACHE_TTL = 60
 
 
 def _load_index() -> Dict:
     """بارگذاری فایل ایندکس"""
     global _index_cache, _cache_time
     
-    # چک کش
     if _index_cache is not None and (time.time() - _cache_time) < CACHE_TTL:
         return _index_cache
     
@@ -35,7 +31,7 @@ def _load_index() -> Dict:
             _index_cache = {}
             return _index_cache
     except Exception as e:
-        logger.error(f"❌ خطا در بارگذاری ایندکس: {e}")
+        logger.error(f"خطا در بارگذاری ایندکس: {e}")
         return {}
 
 
@@ -44,36 +40,17 @@ def _save_index(index: Dict):
     global _index_cache, _cache_time
     
     try:
-        # پشتیبان‌گیری از فایل قبلی
-        if os.path.exists(INDEX_FILE):
-            backup_file = f"{INDEX_FILE}.backup"
-            try:
-                import shutil
-                shutil.copy(INDEX_FILE, backup_file)
-            except:
-                pass
-        
         with open(INDEX_FILE, 'w', encoding='utf-8') as f:
             json.dump(index, f, ensure_ascii=False, indent=2)
-        
         _index_cache = index
         _cache_time = time.time()
         logger.info(f"✅ ایندکس ذخیره شد - {len(index)} آیتم")
-        
     except Exception as e:
-        logger.error(f"❌ خطا در ذخیره ایندکس: {e}")
+        logger.error(f"خطا در ذخیره ایندکس: {e}")
 
 
 def save_to_index(key: str, message_id: int, data_type: str, metadata: Dict = None):
-    """
-    ذخیره ایندکس برای یک محتوا
-    
-    Args:
-        key: کلید یکتا (مثل username یا media_key)
-        message_id: آیدی پیام در کانال
-        data_type: نوع داده (profile, media, reels, highlights, stories)
-        metadata: اطلاعات اضافی (اختیاری)
-    """
+    """ذخیره ایندکس برای یک محتوا"""
     index = _load_index()
     
     index[key] = {
@@ -84,16 +61,11 @@ def save_to_index(key: str, message_id: int, data_type: str, metadata: Dict = No
     }
     
     _save_index(index)
-    logger.info(f"📝 ایندکس شد: {key} -> {message_id} (type: {data_type})")
+    logger.info(f"📝 ایندکس: {key} -> {message_id}")
 
 
 def get_from_index(key: str) -> Optional[Dict]:
-    """
-    دریافت اطلاعات از ایندکس با کلید
-    
-    Returns:
-        دیکشنری شامل message_id, type, timestamp, metadata
-    """
+    """دریافت اطلاعات از ایندکس با کلید"""
     index = _load_index()
     return index.get(key)
 
@@ -198,80 +170,13 @@ def clean_old_index(max_age_days: int = 30):
     return len(to_delete)
 
 
-def rebuild_index_from_channel(context, channel_id: int, limit: int = 100):
-    """
-    بازسازی ایندکس از روی کانال (اسکن پیام‌ها)
-    
-    این تابع کانال رو اسکن می‌کنه و ایندکس رو از نو می‌سازه
-    """
-    from telegram.ext import ContextTypes
-    
-    logger.info(f"🔄 شروع بازسازی ایندکس از کانال {channel_id}...")
-    
-    index = {}
-    offset = 0
-    
-    try:
-        while True:
-            # گرفتن پیام‌های کانال
-            updates = await context.bot.get_updates(
-                offset=offset,
-                limit=limit,
-                timeout=10
-            )
-            
-            if not updates:
-                break
-            
-            for update in updates:
-                if update.channel_post:
-                    msg = update.channel_post
-                    text = msg.text or msg.caption or ""
-                    
-                    # جستجوی کلید در متن پیام
-                    if "🔑 کلید:" in text:
-                        # استخراج کلید
-                        for line in text.split("\n"):
-                            if "🔑 کلید:" in line:
-                                key_hash = line.split("🔑 کلید:")[-1].strip()
-                                # پیدا کردن کلید اصلی از هش (این روش کامل نیست)
-                                # برای بهبود می‌تونی کلید رو هم توی پیام ذخیره کنی
-                                pass
-            
-            offset += len(updates)
-            await asyncio.sleep(0.5)
-        
-        _save_index(index)
-        logger.info(f"✅ بازسازی ایندکس کامل شد - {len(index)} آیتم پیدا شد")
-        
-    except Exception as e:
-        logger.error(f"❌ خطا در بازسازی ایندکس: {e}")
-
-
-# ========== توابع کمکی برای یکپارچه‌سازی با channel_cache ==========
-
 def generate_storage_key(data_type: str, identifier: str) -> str:
-    """
-    تولید کلید استاندارد برای ذخیره‌سازی
-    
-    Examples:
-        - profile:cristiano
-        - media:https://instagram.com/p/xxx
-        - reels:cristiano
-        - highlights:cristiano
-        - stories:cristiano
-        - reel:cristiano:123456
-    """
+    """تولید کلید استاندارد برای ذخیره‌سازی"""
     return f"{data_type}:{identifier}"
 
 
 def parse_storage_key(key: str) -> tuple:
-    """
-    تجزیه کلید به نوع و شناسه
-    
-    Returns:
-        (data_type, identifier)
-    """
+    """تجزیه کلید به نوع و شناسه"""
     parts = key.split(":", 1)
     if len(parts) == 2:
         return parts[0], parts[1]
