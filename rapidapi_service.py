@@ -9,13 +9,10 @@ import hashlib
 import time
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 from database import redis_client 
-from channel_cache import get_profile_from_channel, save_profile_to_channel, get_media_from_channel, save_media_to_channel
-# اضافه کردن import جدید در اول فایل
+from channel_cache import save_media_to_channel
 from smart_cache import (
-    save_file_to_channel, get_file_from_channel,
-    save_profile_to_channel_smart, get_profile_from_channel_smart,
-    get_cached_media_smart, set_cached_media_smart,
-    generate_media_key, get_channel_for_media
+    save_file_to_channel,
+    get_channel_for_media
 )
 
 logger = logging.getLogger(__name__)
