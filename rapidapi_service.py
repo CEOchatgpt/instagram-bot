@@ -261,10 +261,10 @@ async def get_instagram_media(post_url: str, context=None, user_chat_id: int = N
                         if context:
                             await save_file_to_channel(
                                 context=context,
-                                file_url=media_url,
+                                instagram_url=post_url,
+                                direct_download_url=media_url,
                                 media_type=item_type,
-                                caption=processed_items[-1]["caption"],
-                                media_key=f"{media_key}_{item.get('id', '')}"
+                                caption=format_caption(item.get("caption", ""))
                             )
                 
                 final_result = {
