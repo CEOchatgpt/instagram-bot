@@ -64,38 +64,17 @@ async def send_cached_media(context, chat_id: int, instagram_url: str, media_typ
         return False
 
 
-async def save_file_to_channel(context, instagram_url: str, direct_download_url: str, media_type: str):
-    """
-    خود فایل را از لینک دانلود مستقیم می‌گیرد، در کانال آپلود می‌کند و file_id را در ردیس ذخیره می‌کند.
-    """
-    channel_id = get_channel_for_media(media_type)
-    if not channel_id:
-        return None
+# در smart_cache.py، تابع save_file_to_channel رو با این جایگزین کن:
+
+async def save_file_to_channel(context, instagram_url: str, direct_download_url: str, media_type: str, caption: str = ""):
+    """ذخیره خود فایل در کانال - با دانلود و آپلود مجدد"""
+    from channel_cache import save_file_to_channel as save_file
     
-    try:
-        url_hash = hashlib.md5(instagram_url.encode()).hexdigest()
-        msg = None
-        caption = f"📦 #{media_type.upper()}\n🔗 Hash: {url_hash}"
-        
-        # آپلود فایل در کانال تلگرام
-        if media_type in ["video", "reel", "story"]:
-            msg = await context.bot.send_video(chat_id=channel_id, video=direct_download_url, caption=caption, timeout=90)
-            file_id = msg.video.file_id
-        elif media_type in ["photo", "profile_pic"]:
-            msg = await context.bot.send_photo(chat_id=channel_id, photo=direct_download_url, caption=caption, timeout=60)
-            file_id = msg.photo[-1].file_id
-        else:
-            msg = await context.bot.send_document(chat_id=channel_id, document=direct_download_url, caption=caption, timeout=90)
-            file_id = msg.document.file_id
-        
-        # ذخیره شناسه فایل در ردیس برای دفعات بعدی
-        if msg and redis_client:
-            redis_client.setex(f"file_cache:{url_hash}", TTL_CHANNEL, str(file_id))
-            logger.info(f"✅ فایل در کانال ذخیره و در ردیس با موفقیت کش شد.")
-            return file_id
-            
-        return None
-        
-    except Exception as e:
-        logger.error(f"❌ خطا در ذخیره فایل در کانال: {e}")
-        return None
+    return await save_file(
+        context=context,
+        file_url=direct_download_url,
+        media_type=media_type,
+        caption=caption,
+        instagram_url=instagram_url
+    )
+
