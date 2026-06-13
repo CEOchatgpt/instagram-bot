@@ -25,9 +25,22 @@ if not ADMIN_ID:
     print("⚠️ هشدار: متغیر ADMIN_ID تنظیم نشده! دستورات ادمین کار نخواهند کرد.")
 
 
-# کانال دیتابیس (برای ذخیره دائمی لینک‌ها)
-DATABASE_CHANNEL_ID = os.environ.get("DATABASE_CHANNEL_ID")  # مثال: -1001234567890
+# کانال دیتابیس تخصصی (برای ذخیره دائمی لینک‌ها)
+DATABASE_CHANNEL_VIDEOS = os.environ.get("DATABASE_CHANNEL_VIDEOS")  # برای ویدیوها
+DATABASE_CHANNEL_REELS = os.environ.get("DATABASE_CHANNEL_REELS") #برای ریلز
+DATABASE_CHANNEL_PHOTOS = os.environ.get("DATABASE_CHANNEL_PHOTOS")  # برای عکس‌ها
+DATABASE_CHANNEL_PROFILES = os.environ.get("DATABASE_CHANNEL_PROFILES") #برای پروفایل ها
+DATABASE_CHANNEL_STORIES = os.environ.get("DATABASE_CHANNEL_STORIES")  # برای استوری‌ها
 
-if not DATABASE_CHANNEL_ID:
-    print("⚠️ هشدار: DATABASE_CHANNEL_ID تنظیم نشده! کش دائمی غیرفعال است.")
+if not DATABASE_CHANNEL_VIDEOS:
+    print("⚠️ هشدار: DATABASE_CHANNEL_VIDEOS تنظیم نشده!")
+if not DATABASE_CHANNEL_REELS:
+    print("⚠️ هشدار: DATABASE_CHANNEL_REELS تنظیم نشده!")
+if not DATABASE_CHANNEL_PHOTOS:
+    print("⚠️ هشدار: DATABASE_CHANNEL_PHOTOS تنظیم نشده!")
+if not DATABASE_CHANNEL_PROFILES:
+    print("⚠️ هشدار: DATABASE_CHANNEL_PROFILES تنظیم نشده!")
+if not DATABASE_CHANNEL_STORIES:
+    print("⚠️ هشدار: DATABASE_CHANNEL_STORIES تنظیم نشده!")
+
 
