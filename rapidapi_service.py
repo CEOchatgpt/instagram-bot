@@ -199,48 +199,90 @@ async def get_instagram_profile(username: str, context=None):
 
 # ========== تابع مدیا (پست، ریلز، استوری، هایلایت) ==========
 
+# ... (بقیه کد بالا مثل قبل)
+
 async def get_instagram_media(post_url: str, context=None, user_chat_id: int = None) -> dict | None:
-    """دریافت محتوای پست - با ذخیره خود فایل در کانال"""
+    """دریافت پست/ریلز - با ذخیره فایل واقعی در کانال"""
     
     if not post_url or "instagram.com" not in post_url:
         return None
     
-    # استخراج Media ID
     media_id = extract_media_id_from_url(post_url)
     media_key = generate_media_key(media_id or post_url, "post")
     
-    # لایه 1: ارسال مستقیم از کانال (اگر کاربر داره درخواست میده)
+    # اولویت ۱: ارسال مستقیم از کش کانال
     if user_chat_id and context:
         success = await get_file_from_channel(context, media_key, user_chat_id)
         if success:
-            return {"from_cache": True, "items": []}  # قبلاً ارسال شده
+            return {"from_cache": True, "items": []}
     
-    # لایه 2: کش Redis
+    # اولویت ۲: Redis
     cached = await get_cached_media_smart(media_key)
     if cached:
-        logger.info(f"📦 مدیا {media_key} از Redis کش برگردانده شد")
         return cached
     
-    # لایه 3: API (فقط برای محتوای جدید)
-    logger.info(f"🌐 مدیا در کش نبود - ارسال درخواست به API")
+    # اولویت ۳: API
+    logger.info(f"🌐 دریافت از API: {post_url}")
     
-    # ... کد API به همین شکل میمونه ...
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST,
+        "Content-Type": "application/json"
+    }
     
-    # بعد از دریافت نتیجه، ذخیره فایل در کانال
-    if result and result.get("items"):
-        for item in result["items"]:
-            media_type = "video" if item["type"] == "video" else "photo"
-            await save_file_to_channel(
-                context, item["url"], media_type, 
-                result.get("caption", "")[:200], 
-                f"{media_key}_{item['type']}"
-            )
-        
-        # ذخیره در Redis
-        await set_cached_media_smart(media_key, result, ttl=TTL_REDIS_MEDIUM)
-    
-    return result
-    
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://{RAPIDAPI_HOST}/api/instagram/media"
+            async with session.post(url, json={"url": post_url}, headers=headers, timeout=30) as resp:
+                data = await resp.json()
+                
+                # پردازش نتیجه API (بسته به ساختار RapidAPI)
+                result = data.get("result") or data
+                
+                items = []
+                if isinstance(result, dict) and "items" in result:
+                    items = result["items"]
+                elif isinstance(result, list):
+                    items = result
+                
+                if not items:
+                    return None
+                
+                processed_items = []
+                for item in items:
+                    item_type = "video" if item.get("is_video") or item.get("type") == "video" else "photo"
+                    media_url = item.get("video_url") or item.get("url")
+                    
+                    if media_url:
+                        processed_items.append({
+                            "type": item_type,
+                            "url": media_url,
+                            "caption": format_caption(item.get("caption", ""))
+                        })
+                        
+                        # **ذخیره فایل واقعی در کانال**
+                        if context:
+                            await save_file_to_channel(
+                                context=context,
+                                file_url=media_url,
+                                media_type=item_type,
+                                caption=processed_items[-1]["caption"],
+                                media_key=f"{media_key}_{item.get('id', '')}"
+                            )
+                
+                final_result = {
+                    "items": processed_items,
+                    "caption": format_caption(result.get("caption", ""))
+                }
+                
+                await set_cached_media_smart(media_key, final_result)
+                return final_result
+                
+    except Exception as e:
+        logger.error(f"Error in get_instagram_media: {e}")
+        return None
+
+
 
 # ========== توابع استوری و هایلایت ==========
 
