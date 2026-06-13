@@ -868,7 +868,7 @@ async def handle_callback(update: Update, context):
         if username:
             processing = await query.message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
             try:
-                highlights_list = await get_instagram_highlights(username)
+                highlights_list = await get_instagram_highlights(username, context)
                 if not highlights_list:
                     await processing.edit_text(f"❌ هیچ هایلایتی برای @{username} پیدا نشد.")
                     return
