@@ -34,7 +34,7 @@ def _generate_key_hash(data_key: str) -> str:
     return hashlib.md5(data_key.encode()).hexdigest()[:16]
 
 
-def _format_caption(caption: str, max_len: int = 300) -> str:
+def _format_caption(caption: str, max_len: int = 1024) -> str:
     if not caption:
         return "بدون کپشن"
     if len(caption) > max_len:
