@@ -7,6 +7,7 @@ import json
 import logging
 import hashlib
 import time
+import hg_requests
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 from database import redis_client 
 from channel_cache import get_profile_from_channel, save_profile_to_channel, get_media_from_channel, save_media_to_channel
@@ -602,3 +603,27 @@ async def get_instagram_highlights(username: str, context=None):
     except Exception as e:
         logger.error(f"Error getting highlights: {e}")
         return []
+
+async def fetch_instagram_data(url: str) -> dict:
+    """
+    ارتباط با API اینستاگرام و استخراج لینک مستقیم دانلود فایل
+    """
+    try:
+        # کدهای مربوط به ریکوئست زدن به RapidAPI شما در اینجا قرار دارد.
+        # خروجی نهایی این تابع باید لینک دانلود مستقیم (CDN فیسبوک) را برگرداند.
+        
+        # نمونه شبیه‌سازی شده از رفتار خروجی کدت:
+        # response = await make_api_request(url)
+        
+        # فرض می‌کنیم دیتای خروجی API رو پارس کردی؛ آن را به این فرمت ریترن کن:
+        return {
+            "download_url": "https://instagram.fcia... (لینک مستقیم فایل اینستاگرام)",
+            "type": "reel", # یا video یا photo
+            "caption": "کپشن پست اینستاگرام"
+        }
+        
+    except Exception as e:
+        logger.error(f"RapidAPI Error: {e}")
+        return None
+
+
