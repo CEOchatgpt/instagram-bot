@@ -106,7 +106,7 @@ async def start(update: Update, context):
 # در bot.py، تابع profile_command رو پیدا کن و قسمت caption رو به این شکل تغییر بده:
 
 async def profile_command(update: Update, context, username=None):
-    """دریافت پروفایل با دکمه بازگشت"""
+    """دریافت پروفایل - فقط عکس و نام کامل"""
     if username is None:
         if not context.args:
             await update.effective_message.reply_text(
@@ -126,13 +126,8 @@ async def profile_command(update: Update, context, username=None):
             await processing.edit_text("❌ نتونستم پروفایل رو پیدا کنم.")
             return
 
-        # نسخه ساده شده پروفایل - بدون فالوور، فالووینگ، وضعیت خصوصی/تأیید
-        caption = (
-            f"👤 <b>{profile.get('full_name', username)}</b>\n"
-            f"🔖 @{profile.get('username', username)}\n\n"
-            f"📝 {profile.get('biography', 'بدون بیو')[:280]}\n\n"
-            f"📸 {profile.get('posts', 0):,} پست\n"
-        )
+        # کپشن خیلی ساده - فقط نام کامل
+        caption = f"👤 <b>{profile.get('full_name', username)}</b>\n🔖 @{profile.get('username', username)}"
         
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")]
@@ -153,6 +148,7 @@ async def profile_command(update: Update, context, username=None):
     except Exception as e:
         logger.error(f"Error in profile_command: {e}")
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
+
 
 async def reels_command(update: Update, context, username=None):
     """دریافت ریل‌ها با دکمه بازگشت"""
