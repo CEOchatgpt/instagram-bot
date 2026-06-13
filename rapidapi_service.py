@@ -153,16 +153,18 @@ async def get_instagram_profile(username: str, context=None):
                 if not user_data:
                     return None
                 
+                # ========== نسخه سبک پروفایل (فقط اطلاعات پایه) ==========
+                # فقط یوزرنیم، نام کامل، بیوگرافی و تعداد پست
                 profile = {
                     "username": user_data.get("username") or username,
                     "full_name": user_data.get("full_name") or username,
                     "biography": user_data.get("biography") or "بدون بیو",
-                    "followers": user_data.get("follower_count", 0),
-                    "following": user_data.get("following_count", 0),
+                    # "followers": user_data.get("follower_count", 0),  # کامنت شده برای کاهش مصرف API
+                    # "following": user_data.get("following_count", 0),  # کامنت شده
                     "posts": user_data.get("media_count", 0),
                     "profile_pic": user_data.get("hd_profile_pic_url_info", {}).get("url") or user_data.get("profile_pic_url"),
-                    "is_private": user_data.get("is_private", False),
-                    "is_verified": user_data.get("is_verified", False),
+                    # "is_private": user_data.get("is_private", False),  # کامنت شده
+                    # "is_verified": user_data.get("is_verified", False),  # کامنت شده
                 }
                 
                 # ذخیره در هر دو لایه
@@ -177,7 +179,7 @@ async def get_instagram_profile(username: str, context=None):
         return None
 
 
-# ========== تابع مدیا (پست، ریلز، استوری، هایلایت) ==========
+# ========== توابع مدیا (پست، ریلز، استوری، هایلایت) ==========
 
 async def get_instagram_media(post_url: str, context=None) -> dict | None:
     """دریافت محتوای پست - کش دو لایه (Redis + کانال تلگرام)"""
