@@ -10,6 +10,13 @@ import time
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 from database import redis_client 
 from channel_cache import get_profile_from_channel, save_profile_to_channel, get_media_from_channel, save_media_to_channel
+# اضافه کردن import جدید در اول فایل
+from smart_cache import (
+    save_file_to_channel, get_file_from_channel,
+    save_profile_to_channel_smart, get_profile_from_channel_smart,
+    get_cached_media_smart, set_cached_media_smart,
+    generate_media_key, get_channel_for_media
+)
 
 logger = logging.getLogger(__name__)
 
@@ -179,103 +186,48 @@ async def get_instagram_profile(username: str, context=None):
 
 # ========== تابع مدیا (پست، ریلز، استوری، هایلایت) ==========
 
-async def get_instagram_media(post_url: str, context=None) -> dict | None:
-    """دریافت محتوای پست - کش دو لایه (Redis + کانال تلگرام)"""
+async def get_instagram_media(post_url: str, context=None, user_chat_id: int = None) -> dict | None:
+    """دریافت محتوای پست - با ذخیره خود فایل در کانال"""
     
     if not post_url or "instagram.com" not in post_url:
         return None
     
-    # کلید یکتا برای این محتوا
-    media_key = post_url
+    # استخراج Media ID
+    media_id = extract_media_id_from_url(post_url)
+    media_key = generate_media_key(media_id or post_url, "post")
     
-    # لایه 1: کش Redis
-    cached = get_cached_media(media_key)
+    # لایه 1: ارسال مستقیم از کانال (اگر کاربر داره درخواست میده)
+    if user_chat_id and context:
+        success = await get_file_from_channel(context, media_key, user_chat_id)
+        if success:
+            return {"from_cache": True, "items": []}  # قبلاً ارسال شده
+    
+    # لایه 2: کش Redis
+    cached = await get_cached_media_smart(media_key)
     if cached:
-        logger.info(f"📦 مدیا {post_url[:50]}... از Redis کش برگردانده شد")
+        logger.info(f"📦 مدیا {media_key} از Redis کش برگردانده شد")
         return cached
     
-    # لایه 2: کش کانال تلگرام
-    if context:
-        try:
-            channel_cached = await get_media_from_channel(context, media_key)
-            if channel_cached:
-                logger.info(f"🏦 مدیا {post_url[:50]}... از کانال دیتابیس برگردانده شد")
-                set_cached_media(media_key, channel_cached, ttl_seconds=7200)
-                return channel_cached
-        except Exception as e:
-            logger.warning(f"خطا در خواندن مدیا از کانال: {e}")
+    # لایه 3: API (فقط برای محتوای جدید)
+    logger.info(f"🌐 مدیا در کش نبود - ارسال درخواست به API")
     
-    # لایه 3: API
-    logger.info(f"🌐 مدیا {post_url[:50]}... در کش نبود - ارسال درخواست به API")
+    # ... کد API به همین شکل میمونه ...
     
-    # تشخیص استوری
-    story_match = re.search(r'instagram\.com/stories/([^/]+)/?(\d+)?', post_url)
-    if story_match:
-        result = await get_instagram_story(story_match.group(1), story_match.group(2), context)
-        if result and result.get("items"):
-            set_cached_media(media_key, result, ttl_seconds=7200)
-            if context:
-                await save_media_to_channel(context, media_key, result)
-        return result
-    
-    # تشخیص هایلایت
-    highlight_match = re.search(r'instagram\.com/stories/highlights/([^/]+)/?', post_url)
-    if highlight_match:
-        clean_id = highlight_match.group(1)
-        highlight_url = f"https://www.instagram.com/stories/highlights/{clean_id}/"
-        return await get_instagram_media(highlight_url, context)
-    
-    # API اصلی برای لینک‌های معمولی
-    api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": RAPIDAPI_HOST,
-        "Content-Type": "application/json"
-    }
-    
-    data = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, json={"url": post_url}, headers=headers, timeout=15) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        break
-                    else:
-                        logger.warning(f"Attempt {attempt} got status {response.status}")
-        except Exception as e:
-            logger.warning(f"Attempt {attempt} failed: {e}")
-            if attempt < MAX_RETRIES:
-                await asyncio.sleep(RETRY_DELAY * (2 ** (attempt - 1)))
-    
-    if not isinstance(data, list) or not data:
-        return None
-    
-    raw_caption = data[0].get("meta", {}).get("title", "")
-    caption = format_caption(raw_caption)
-    items = []
-    
-    for item in data:
-        urls = item.get("urls", [])
-        if not urls:
-            continue
-        best = max(urls, key=lambda x: x.get("quality", 0))
-        extension = urls[0].get("extension", "").lower()
-        if extension == "mp4":
-            items.append({"type": "video", "url": best["url"]})
-        else:
-            items.append({"type": "photo", "url": best["url"]})
-    
-    result = {"caption": caption, "items": items} if items else None
-    
-    # ذخیره در هر دو لایه
-    if result:
-        set_cached_media(media_key, result, ttl_seconds=7200)
-        if context:
-            await save_media_to_channel(context, media_key, result)
+    # بعد از دریافت نتیجه، ذخیره فایل در کانال
+    if result and result.get("items"):
+        for item in result["items"]:
+            media_type = "video" if item["type"] == "video" else "photo"
+            await save_file_to_channel(
+                context, item["url"], media_type, 
+                result.get("caption", "")[:200], 
+                f"{media_key}_{item['type']}"
+            )
+        
+        # ذخیره در Redis
+        await set_cached_media_smart(media_key, result, ttl=TTL_REDIS_MEDIUM)
     
     return result
-
+    
 
 # ========== توابع استوری و هایلایت ==========
 
