@@ -169,6 +169,14 @@ def clean_old_index(max_age_days: int = 30):
     
     return len(to_delete)
 
+def search_by_media_id(media_id: str) -> dict:
+    index = _load_index()
+    for key, value in index.items():
+        if value.get('metadata', {}).get('media_id') == media_id:
+            return value
+        if media_id in key:
+            return value
+    return None
 
 def generate_storage_key(data_type: str, identifier: str) -> str:
     """تولید کلید استاندارد برای ذخیره‌سازی"""
