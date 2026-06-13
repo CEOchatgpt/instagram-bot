@@ -71,62 +71,6 @@ def detect_media_type(url: str) -> str:
     else:
         return "photo"
 
-async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """هندلر اصلی ربات برای پردازش لینک‌های ورودی کاربر"""
-    message = update.message
-    user_link = message.text.strip()
-    chat_id = update.effective_chat.id
-    
-    # تشخیص اولیه نوع محتوا برای بررسی کش
-    media_type = detect_media_type(user_link)
-    
-    # ─── مرحله ۱: بررسی کش دیتابیس تلگرام ───
-    # اگر این لینک قبلاً توسط کاربر دیگری دانلود شده باشد، خود فایل مستقیم فرستاده می‌شود
-    is_sent = await send_cached_media(context, chat_id=chat_id, instagram_url=user_link, media_type=media_type)
-    if is_sent:
-        logger.info(f"✨ [CACHE HIT] فایل برای کاربر {chat_id} از کانال‌های ذخیره ارسال شد.")
-        return # کار تمام است و نیازی به رفتن به سراغ API نیست
-        
-    # ─── مرحله ۲: اگر در کش نبود -> مصرف API اینستاگرام ───
-    logger.info(f"🔍 [CACHE MISS] در حال فراخوانی API برای لینک: {user_link}")
-    processing_msg = await message.reply_text("⏳ در حال دانلود و پردازش از اینستاگرام...")
-    
-    try:
-        # فراخوانی سرویس API پروژه شما برای گرفتن لینک مستقیم دانلود
-        api_result = await fetch_instagram_data(user_link)
-        
-        if not api_result or "download_url" not in api_result:
-            await processing_msg.edit_text("❌ خطا در دریافت اطلاعات پست. مطمئن شوید پیج عمومی است.")
-            return
-            
-        direct_url = api_result.get("download_url")
-        actual_type = api_result.get("type", media_type) # نوع دقیق محتوا از سمت API (عکس یا ویدیو)
-        caption = api_result.get("caption", "خدمت شما! 🔥")
-        
-        # حذف پیام حالت انتظار
-        await context.bot.delete_message(chat_id=chat_id, message_id=processing_msg.message_id)
-        
-        # ارسال فایل به خود کاربر
-        if actual_type in ["video", "reel", "story"]:
-            sent_msg = await context.bot.send_video(chat_id=chat_id, video=direct_url, caption=caption)
-        else:
-            sent_msg = await context.bot.send_photo(chat_id=chat_id, photo=direct_url, caption=caption)
-            
-        # ─── مرحله ۳: ذخیره سازی خود فایل در کانال‌های ۵گانه برای آینده ───
-        # این کار بعد از تحویل به کاربر انجام می‌شود تا معطل نشود
-        await save_file_to_channel(
-            context=context, 
-            instagram_url=user_link, 
-            direct_download_url=direct_url, 
-            media_type=actual_type
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ خطا در پردازش لینک اینستاگرام: {e}")
-        await message.reply_text("❌ متأسفانه در حال حاضر مشکلی در دانلود این پست به وجود آمده است.")
-
-
-
 # ========== تابع کمکی برای ارسال مستقیم از کش ==========
 
 async def try_send_from_cache(media_key: str, context, chat_id: int) -> bool:
@@ -897,40 +841,126 @@ async def inline_query(update: Update, context):
     await update.inline_query.answer(results, cache_time=60, is_personal=True)
 
 
-async def handle_direct_input(update: Update, context):
-    """هندلر برای ورودی مستقیم توی بات"""
-    text = update.message.text.strip()
-    
-    if text.startswith('@'):
-        username = text.lstrip('@')
-        context.user_data['last_username'] = username
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("👤 پروفایل", callback_data=f"quick_profile_{username}"),
-                InlineKeyboardButton("🎬 ریلز", callback_data=f"quick_reels_{username}")
-            ],
-            [
-                InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
-                InlineKeyboardButton("📖 استوری", callback_data=f"quick_stories_{username}")
-            ],
-            [
-                InlineKeyboardButton("❌ لغو", callback_data="back_to_main")
-            ]
-        ])
-        
-        await update.message.reply_text(
-            f"🔍 <b>{username}</b>\n\nکدوم اطلاعات رو میخوای؟",
-            parse_mode='HTML',
-            reply_markup=keyboard
-        )
-        return
-    
-    if "instagram.com" in text:
-        await handle_link(update, context)
-        return
-    
-    await update.message.reply_text("❌ لطفاً یک یوزرنیم (با @) یا لینک اینستاگرام بفرست.")
+async def handle_direct_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """هندلر اصلی برای پردازش ورودی‌های متنی مستقیم کاربر (لینک‌ها یا یوزرنیم‌ها)"""
+    message = update.message
+    text = message.text.strip()
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
 
+    # ۱. بررسی ریت لیمیت
+    if is_rate_limited(user_id):
+        await message.reply_text("⚠️ تعداد درخواست‌های شما بیش از حد مجاز است. لطفا کمی صبر کنید.")
+        return
+
+    # ۲. تشخیص نوع لینک ورودی
+    is_insta, url_type, clean_url = parse_instagram_url(text)
+
+    if is_insta:
+        # ─── [مرحله جدید: بررسی دیتابیس کانال‌های تلگرام قبل از مصرف API] ───
+        # تعیین نوع مدیا برای سیستم کش هوشمند فایل
+        cache_media_type = "photo"
+        if url_type in ["video", "reel"]:
+            cache_media_type = "reel"
+        elif url_type == "story":
+            cache_media_type = "story"
+
+        # بررسی اینکه آیا خود این فایل قبلاً در کانال‌ها ذخیره شده یا نه
+        is_sent = await send_cached_media(context, chat_id=chat_id, instagram_url=clean_url, media_type=cache_media_type)
+        if is_sent:
+            logger.info(f"✨ [CACHE HIT] فایل برای کاربر {chat_id} از آرشیو کانال‌ها ارسال شد.")
+            return # کار تمام است؛ بدون مصرف کردن حتی ۱ واحد از API فایل تحویل داده شد!
+        
+        # ─── [اگر در کش نبود: ادامه روال طبیعی ربات و مصرف API] ───
+        processing = await message.reply_text("⏳ در حال پردازش لینک اینستاگرام...")
+        
+        try:
+            # دریافت اطلاعات از API اینستاگرام
+            media_data = await get_instagram_media(clean_url, context)
+            if not media_data:
+                await processing.edit_text("❌ خطا در دریافت اطلاعات. مطمئن شوید پیج عمومی است و لینک معتبر است.")
+                return
+
+            # ارسال محتوا به کاربر بر اساس تنظیماتش (آلبوم یا فایل متیو)
+            mode = get_user_default_mode(user_id)
+            await processing.edit_text("📥 در حال دانلود و ارسال فایل‌ها...")
+            
+            # متغیری برای ذخیره لینک دانلود مستقیم جهت کش کردن
+            direct_download_url = None
+            
+            if mode == "file":
+                # ارسال تک به تک فایل‌ها
+                for item in media_data:
+                    direct_download_url = item.get("url")
+                    if item.get("type") == "video":
+                        await context.bot.send_video(chat_id=chat_id, video=direct_download_url, caption="🔥 @CEOchatgpt")
+                    else:
+                        await context.bot.send_photo(chat_id=chat_id, photo=direct_download_url, caption="🔥 @CEOchatgpt")
+            else:
+                # ارسال به صورت آلبوم (Media Group)
+                if len(media_data) == 1:
+                    direct_download_url = media_data[0].get("url")
+                    if media_data[0].get("type") == "video":
+                        await context.bot.send_video(chat_id=chat_id, video=direct_download_url, caption="🔥 @CEOchatgpt")
+                    else:
+                        await context.bot.send_photo(chat_id=chat_id, photo=direct_download_url, caption="🔥 @CEOchatgpt")
+                else:
+                    media_group = []
+                    for item in media_data:
+                        # برای آلبوم‌ها اولین لینک دانلود مستقیم رو به عنوان نمونه کش می‌کنیم
+                        if not direct_download_url:
+                            direct_download_url = item.get("url")
+                        if item.get("type") == "video":
+                            media_group.append(InputMediaVideo(media=item.get("url")))
+                        else:
+                            media_group.append(InputMediaPhoto(media=item.get("url")))
+                    
+                    if media_group:
+                        media_group[0].caption = "🔥 @CEOchatgpt"
+                        await context.bot.send_media_group(chat_id=chat_id, media=media_group)
+
+            await context.bot.delete_message(chat_id=chat_id, message_id=processing.message_id)
+
+            # ─── [مرحله جدید: ذخیره خودِ فایل در کانال‌های ۵گانه برای کاربرهای بعدی] ───
+            if direct_download_url:
+                await save_file_to_channel(
+                    context=context,
+                    instagram_url=clean_url,
+                    direct_download_url=direct_download_url,
+                    media_type=cache_media_type
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing direct link: {e}")
+            await processing.edit_text("❌ خطایی در پردازش درخواست شما رخ داد.")
+            
+    else:
+        # ورودی کاربر لینک نیست، پس احتمالاً یوزرنیم است (نمایش پنل شیشه‌ای پیج)
+        username = text.replace("@", "").strip()
+        if not re.match(r"^[a-zA-Z0-9_\.]+$", username):
+            await message.reply_text("❌ لطفاً یک لینک معتبر اینستاگرام یا یک یوزرنیم درست بفرستید.")
+            return
+
+        processing = await message.reply_text(f"🔍 در حال بررسی پروفایل {username}...")
+        profile = await get_instagram_profile(username, context)
+        
+        if not profile:
+            await processing.edit_text("❌ پروفایل یافت نشد یا پیج خصوصی است.")
+            return
+            
+        await context.bot.delete_message(chat_id=chat_id, message_id=processing.message_id)
+        
+        # نمایش کیبورد شیشه‌ای آپشن‌های پیج به کاربر
+        keyboard = get_profile_keyboard(username, profile)
+        caption = f"👤 پیج: {profile.get('full_name', username)}\n"
+        caption += f"📝 بیو: {profile.get('biography', '')}\n\n"
+        caption += f"👥 فالوورز: {profile.get('followers', 0)} | 👤 فالووینگ: {profile.get('following', 0)}\n"
+        caption += f"📮 پست‌ها: {profile.get('posts_count', 0)}"
+        
+        if profile.get("profile_pic_url"):
+            await context.bot.send_photo(chat_id=chat_id, photo=profile.get("profile_pic_url"), caption=caption, reply_markup=keyboard)
+        else:
+            await message.reply_text(caption, reply_markup=keyboard)
 
 async def handle_callback(update: Update, context):
     query = update.callback_query
