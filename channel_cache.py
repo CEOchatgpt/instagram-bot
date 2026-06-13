@@ -328,24 +328,27 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
     extracted = extract_instagram_id(media_key)
     if extracted:
         storage_key = f"media:{extracted['full_id']}"
+        display_key = extracted['id']  # برای لاگ
     elif ":" in media_key and not media_key.startswith("media:"):
         storage_key = f"media:{media_key}"
+        display_key = media_key
     else:
         key_hash = _generate_key_hash(media_key)
         storage_key = generate_storage_key("media", key_hash)
+        display_key = key_hash
     
     cache_key = f"media:{storage_key}"
     
     # چک کش حافظه
     cached = _get_memory_cache(cache_key)
     if cached:
-        logger.info(f"📦 مدیا {key_hash} از کش برگردانده شد")
+        logger.info(f"📦 مدیا {display_key} از کش برگردانده شد")
         return cached.get("data")
     
     # چک ایندکس
     index_data = get_from_index(storage_key)
     if not index_data:
-        logger.info(f"🔍 مدیا {key_hash} در ایندکس یافت نشد")
+        logger.info(f"🔍 مدیا {display_key} در ایندکس یافت نشد")
         return None
     
     metadata = index_data.get("metadata", {})
