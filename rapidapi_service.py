@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه فوق‌العاده سبک برای پروفایل
+# rapidapi_service.py - نسخه بدون Redis (فقط کانال تلگرام) با پروفایل فوق‌العاده سبک
 
 import re
 import aiohttp
@@ -6,9 +6,13 @@ import asyncio
 import json
 import logging
 import hashlib
-import time
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
-from channel_cache import get_profile_from_channel, save_profile_to_channel, get_media_from_channel, save_media_to_channel
+from channel_cache import (
+    get_profile_from_channel, 
+    save_profile_to_channel, 
+    get_media_from_channel, 
+    save_media_to_channel
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +68,13 @@ def format_caption(raw) -> str:
     return text
 
 
-# ========== تابع پروفایل (فوق‌العاده سبک) ==========
+# ========== تابع پروفایل (فقط کانال تلگرام - سبک) ==========
 
 async def get_instagram_profile(username: str, context=None):
-    """دریافت پروفایل - فقط نام کامل و عکس پروفایل"""
+    """
+    دریافت پروفایل - فقط نام کامل و عکس پروفایل
+    کش فقط در کانال تلگرام (بدون Redis)
+    """
     
     # لایه 1: کش کانال تلگرام
     if context:
@@ -104,15 +111,14 @@ async def get_instagram_profile(username: str, context=None):
                 if not user_data:
                     return None
                 
-                # ========== فقط حداقل اطلاعات ==========
+                # ========== فقط حداقل اطلاعات (نام کامل + عکس) ==========
                 profile = {
                     "username": user_data.get("username") or username,
-                    "full_name": user_data.get("full_name") or username,  # فقط نام کامل
+                    "full_name": user_data.get("full_name") or username,
                     "profile_pic": user_data.get("hd_profile_pic_url_info", {}).get("url") or user_data.get("profile_pic_url"),
-                    # همه چیز دیگه حذف شده: بیوگرافی، تعداد پست، فالوور، فالووینگ، وضعیت خصوصی، تأیید شده
                 }
                 
-                # ذخیره در کانال برای دفعات بعد
+                # ذخیره در کانال برای دفعات بعد (فقط اگه عکس داشته باشه)
                 if context and profile.get("profile_pic"):
                     await save_profile_to_channel(context, username, profile)
                     logger.info(f"✅ پروفایل {username} در کانال دیتابیس ذخیره شد")
@@ -124,10 +130,13 @@ async def get_instagram_profile(username: str, context=None):
         return None
 
 
-# ========== توابع مدیا (بدون تغییر) ==========
+# ========== تابع مدیا (پست، ریلز، استوری، هایلایت) ==========
 
 async def get_instagram_media(post_url: str, context=None) -> dict | None:
-    """دریافت محتوای پست - کش فقط از کانال تلگرام"""
+    """
+    دریافت محتوای پست - کش فقط در کانال تلگرام
+    پشتیبانی از: پست، ریلز، استوری، هایلایت
+    """
     
     if not post_url or "instagram.com" not in post_url:
         return None
@@ -152,9 +161,8 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     story_match = re.search(r'instagram\.com/stories/([^/]+)/?(\d+)?', post_url)
     if story_match:
         result = await get_instagram_story(story_match.group(1), story_match.group(2), context)
-        if result and result.get("items"):
-            if context:
-                await save_media_to_channel(context, media_key, result)
+        if result and result.get("items") and context:
+            await save_media_to_channel(context, media_key, result)
         return result
     
     # تشخیص هایلایت
@@ -164,7 +172,7 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
         highlight_url = f"https://www.instagram.com/stories/highlights/{clean_id}/"
         return await get_instagram_media(highlight_url, context)
     
-    # API اصلی برای لینک‌های معمولی
+    # API اصلی برای لینک‌های معمولی (پست و ریلز)
     api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -215,10 +223,10 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     return result
 
 
-# ========== توابع استوری (بدون تغییر) ==========
+# ========== توابع استوری ==========
 
 async def get_instagram_story(username: str, story_id: str = None, context=None):
-    """دریافت استوری کاربر با پشتیبانی از کش"""
+    """دریافت استوری کاربر با کش در کانال تلگرام"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -271,6 +279,7 @@ async def get_instagram_story(username: str, story_id: str = None, context=None)
                 
                 if result and result.get("items") and context:
                     await save_media_to_channel(context, story_key, result)
+                    logger.info(f"✅ استوری {username} در کانال دیتابیس ذخیره شد")
                 
                 return result
                 
@@ -292,7 +301,7 @@ async def get_instagram_highlight_stories(highlight_id: str, username: str = Non
 
 
 async def check_and_get_stories(username: str, context=None):
-    """بررسی و دریافت استوری‌های کاربر با کش در کانال"""
+    """بررسی و دریافت استوری‌های کاربر با کش در کانال تلگرام"""
     
     story_key = f"story:{username}:latest"
     
@@ -357,10 +366,10 @@ async def check_and_get_stories(username: str, context=None):
         return None
 
 
-# ========== تابع ریلز (بدون تغییر) ==========
+# ========== تابع ریلز (دریافت لیست ریل‌های کاربر) ==========
 
 async def get_user_reels_v2(username: str, context=None):
-    """دریافت ریل‌ها با ذخیره در کش و کانال"""
+    """دریافت لیست ریل‌های کاربر با کش در کانال تلگرام"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -384,7 +393,7 @@ async def get_user_reels_v2(username: str, context=None):
             url = f"https://{RAPIDAPI_HOST}/api/instagram/posts"
             payload = {"username": username, "maxId": ""}
             
-            logger.info(f"V2: Fetching posts for {username}")
+            logger.info(f"Fetching posts for {username}")
             
             async with session.post(url, json=payload, headers=headers, timeout=30) as resp:
                 data = await resp.json()
@@ -403,7 +412,7 @@ async def get_user_reels_v2(username: str, context=None):
                 elif isinstance(result, list):
                     posts_list = result
                 
-                logger.info(f"V2: Found {len(posts_list)} posts for {username}")
+                logger.info(f"Found {len(posts_list)} posts for {username}")
                 
                 if not posts_list:
                     return None
@@ -456,6 +465,7 @@ async def get_user_reels_v2(username: str, context=None):
                 # ذخیره لیست ریل‌ها در کش کانال
                 if result_data and context:
                     await save_media_to_channel(context, reels_key, result_data)
+                    logger.info(f"✅ لیست ریل‌های {username} در کانال دیتابیس ذخیره شد")
                 
                 return result_data
                 
@@ -467,8 +477,10 @@ async def get_user_reels_v2(username: str, context=None):
         return None
 
 
+# ========== تابع هایلایت (دریافت لیست هایلایت‌های کاربر) ==========
+
 async def get_instagram_highlights(username: str, context=None):
-    """دریافت لیست هایلایت‌های کاربر با کش"""
+    """دریافت لیست هایلایت‌های کاربر با کش در کانال تلگرام"""
     
     highlights_key = f"highlights:{username}"
     
@@ -515,6 +527,7 @@ async def get_instagram_highlights(username: str, context=None):
                 # ذخیره در کش کانال
                 if highlights and context:
                     await save_media_to_channel(context, highlights_key, highlights)
+                    logger.info(f"✅ لیست هایلایت‌های {username} در کانال دیتابیس ذخیره شد")
                 
                 return highlights
                 
