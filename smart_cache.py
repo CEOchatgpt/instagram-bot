@@ -1,4 +1,4 @@
-# smart_cache.py - سیستم کش هوشمند چند لایه
+# smart_cache.py -  سیستم کش هوشمند چند لایه
 
 import logging
 import hashlib
