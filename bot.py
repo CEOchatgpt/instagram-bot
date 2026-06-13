@@ -777,6 +777,14 @@ async def inline_query(update: Update, context):
 async def handle_direct_input(update: Update, context):
     """هندلر برای ورودی مستقیم توی بات"""
     text = update.message.text.strip()
+
+    # اضافه شده: چک کردن شناسه یکتا (مثل 96TXg1muSP)
+    if re.match(r'^[A-Za-z0-9_-]{8,15}$', text):
+        # کاربر یک شناسه یکتا فرستاده
+        await update.message.reply_text(f"🔍 شناسه {text} دریافت شد. در حال جستجو...")
+        fake_url = f"https://www.instagram.com/p/{text}/"
+        update.message.text = fake_url
+        # ادامه میده به handle_link
     
     if text.startswith('@'):
         username = text.lstrip('@')
