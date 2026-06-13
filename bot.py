@@ -143,7 +143,7 @@ async def start(update: Update, context):
 
 
 async def profile_command(update: Update, context, username=None):
-    """دریافت پروفایل با دکمه بازگشت"""
+    """دریافت پروفایل با دکمه بازگشت به منوی انتخاب"""
     if username is None:
         if not context.args:
             await update.effective_message.reply_text(
@@ -176,6 +176,7 @@ async def profile_command(update: Update, context, username=None):
             f"📸 {profile.get('posts', 0):,} پست\n"
         )
         
+        # 👇 اینجا مشکل داشت - باید دکمه بازگشت به منوی انتخاب باشه، نه تنظیمات!
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")]
         ])
@@ -195,7 +196,7 @@ async def profile_command(update: Update, context, username=None):
     except Exception as e:
         logger.error(f"Error in profile_command: {e}")
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
-
+        
 
 async def reels_command(update: Update, context, username=None):
     """دریافت ریل‌ها با دکمه بازگشت"""
