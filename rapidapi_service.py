@@ -14,6 +14,7 @@ from channel_cache import (
     get_reels_list_from_channel, save_reels_list_to_channel,
     get_highlights_list_from_channel, save_highlights_list_to_channel
 )
+from extract_instagram_id import extract_instagram_id
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +169,12 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     if not post_url or "instagram.com" not in post_url:
         return None
     
-    cache_key = f"media:{hashlib.md5(post_url.encode()).hexdigest()}"
+    # استخراج شناسه یکتا
+    extracted = extract_instagram_id(post_url)
+    if extracted:
+        cache_key = f"media:{extracted['full_id']}"
+    else:
+        cache_key = f"media:{hashlib.md5(post_url.encode()).hexdigest()}"
     
     # لایه 1: کش حافظه
     cached = _get_memory_cache(cache_key)
