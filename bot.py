@@ -19,10 +19,10 @@ from telegram.ext import (
 
 from config import BOT_TOKEN, ADMIN_ID
 from database import redis_client
+# ساختار اصلاح‌شده و بدون خطا:
 from smart_cache import (
     save_file_to_channel,
-    get_cached_media_smart, set_cached_media_smart,
-    generate_media_key, get_channel_for_media,
+    get_channel_for_media,
     send_cached_media
 )
 from rapidapi_service import (
