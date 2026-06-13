@@ -215,13 +215,28 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
         return None
     
     try:
-        key_hash = _generate_key_hash(media_key)
-        storage_key = generate_storage_key("media", key_hash)
+        # ✅ تغییر مهم: اگه media_key خودش شامل شناسه یکتاست، مستقیم استفاده کن
+        from extract_instagram_id import extract_instagram_id
+        
+        extracted = extract_instagram_id(media_key)
+        if extracted:
+            # این یه لینک اینستاگرامه، کلید پایدار بساز
+            storage_key = f"media:{extracted['full_id']}"
+            logger.info(f"🔑 استفاده از کلید پایدار: {storage_key}")
+        elif ":" in media_key and not media_key.startswith("media:"):
+            # احتمالاً از قبل کلید استاندارد هست
+            storage_key = f"media:{media_key}"
+            logger.info(f"🔑 استفاده از کلید استاندارد: {storage_key}")
+        else:
+            # fallback به هش
+            key_hash = _generate_key_hash(media_key)
+            storage_key = generate_storage_key("media", key_hash)
+            logger.info(f"🔑 استفاده از کلید هش شده: {storage_key}")
         
         # چک کن قبلاً ذخیره شده؟
         existing = get_from_index(storage_key)
         if existing:
-            logger.info(f"📦 مدیا {key_hash} قبلاً ذخیره شده")
+            logger.info(f"📦 مدیا {storage_key} قبلاً ذخیره شده")
             return existing["message_id"]
         
         items = media_data.get("items", [])
@@ -286,12 +301,12 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
                 "message_ids": message_ids
             })
             
-            _set_memory_cache(f"media:{key_hash}", {
+            _set_memory_cache(f"media:{storage_key}", {
                 "message_ids": message_ids,
                 "data": media_data
             }, ttl=86400)
             
-            logger.info(f"✅ {len(message_ids)} رسانه ذخیره شد (key: {key_hash})")
+            logger.info(f"✅ {len(message_ids)} رسانه ذخیره شد (key: {storage_key})")
             return message_ids[0]
         
         return None
@@ -307,9 +322,19 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
     if not DATABASE_CHANNEL_ID:
         return None
     
-    key_hash = _generate_key_hash(media_key)
-    storage_key = generate_storage_key("media", key_hash)
-    cache_key = f"media:{key_hash}"
+    # ✅ ساخت کلید یکسان با روش ذخیره
+    from extract_instagram_id import extract_instagram_id
+    
+    extracted = extract_instagram_id(media_key)
+    if extracted:
+        storage_key = f"media:{extracted['full_id']}"
+    elif ":" in media_key and not media_key.startswith("media:"):
+        storage_key = f"media:{media_key}"
+    else:
+        key_hash = _generate_key_hash(media_key)
+        storage_key = generate_storage_key("media", key_hash)
+    
+    cache_key = f"media:{storage_key}"
     
     # چک کش حافظه
     cached = _get_memory_cache(cache_key)
