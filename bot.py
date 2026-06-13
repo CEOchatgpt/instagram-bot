@@ -14,7 +14,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters,
-    InlineQueryHandler
+    InlineQueryHandler, ContextTypes
 )
 
 from config import BOT_TOKEN, ADMIN_ID
@@ -22,7 +22,8 @@ from database import redis_client
 from smart_cache import (
     get_file_from_channel, save_file_to_channel,
     get_cached_media_smart, set_cached_media_smart,
-    generate_media_key, get_channel_for_media
+    generate_media_key, get_channel_for_media,
+    send_cached_media
 )
 from rapidapi_service import (
     get_instagram_media,
@@ -31,7 +32,8 @@ from rapidapi_service import (
     get_instagram_highlight_stories,
     get_user_reels_v2,
     check_and_get_stories,
-    extract_media_id_from_url
+    extract_media_id_from_url,
+    fetch_instagram_data
 )
 from user_settings import get_user_default_mode, set_user_default_mode, get_user_settings_keyboard
 
@@ -57,6 +59,72 @@ def is_rate_limited(user_id: int) -> tuple[bool, int]:
     
     user_requests[user_id].append(now)
     return False, 0
+
+def detect_media_type(url: str) -> str:
+    """تشخیص نوع محتوا بر اساس ساختار لینک اینستاگرام"""
+    url = url.lower()
+    if "/reel/" in url or "/p/" in url: # پست‌ها و ریلزها معمولاً ویدیو یا عکس هستند
+        # در ادامه بر اساس دیتای دریافتی دقیق‌تر می‌شود، فعلاً پیش‌فرض ویدیو/ریلز می‌گیریم
+        return "reel" 
+    elif "/stories/" in url:
+        return "story"
+    else:
+        return "photo"
+
+async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """هندلر اصلی ربات برای پردازش لینک‌های ورودی کاربر"""
+    message = update.message
+    user_link = message.text.strip()
+    chat_id = update.effective_chat.id
+    
+    # تشخیص اولیه نوع محتوا برای بررسی کش
+    media_type = detect_media_type(user_link)
+    
+    # ─── مرحله ۱: بررسی کش دیتابیس تلگرام ───
+    # اگر این لینک قبلاً توسط کاربر دیگری دانلود شده باشد، خود فایل مستقیم فرستاده می‌شود
+    is_sent = await send_cached_media(context, chat_id=chat_id, instagram_url=user_link, media_type=media_type)
+    if is_sent:
+        logger.info(f"✨ [CACHE HIT] فایل برای کاربر {chat_id} از کانال‌های ذخیره ارسال شد.")
+        return # کار تمام است و نیازی به رفتن به سراغ API نیست
+        
+    # ─── مرحله ۲: اگر در کش نبود -> مصرف API اینستاگرام ───
+    logger.info(f"🔍 [CACHE MISS] در حال فراخوانی API برای لینک: {user_link}")
+    processing_msg = await message.reply_text("⏳ در حال دانلود و پردازش از اینستاگرام...")
+    
+    try:
+        # فراخوانی سرویس API پروژه شما برای گرفتن لینک مستقیم دانلود
+        api_result = await fetch_instagram_data(user_link)
+        
+        if not api_result or "download_url" not in api_result:
+            await processing_msg.edit_text("❌ خطا در دریافت اطلاعات پست. مطمئن شوید پیج عمومی است.")
+            return
+            
+        direct_url = api_result.get("download_url")
+        actual_type = api_result.get("type", media_type) # نوع دقیق محتوا از سمت API (عکس یا ویدیو)
+        caption = api_result.get("caption", "خدمت شما! 🔥")
+        
+        # حذف پیام حالت انتظار
+        await context.bot.delete_message(chat_id=chat_id, message_id=processing_msg.message_id)
+        
+        # ارسال فایل به خود کاربر
+        if actual_type in ["video", "reel", "story"]:
+            sent_msg = await context.bot.send_video(chat_id=chat_id, video=direct_url, caption=caption)
+        else:
+            sent_msg = await context.bot.send_photo(chat_id=chat_id, photo=direct_url, caption=caption)
+            
+        # ─── مرحله ۳: ذخیره سازی خود فایل در کانال‌های ۵گانه برای آینده ───
+        # این کار بعد از تحویل به کاربر انجام می‌شود تا معطل نشود
+        await save_file_to_channel(
+            context=context, 
+            instagram_url=user_link, 
+            direct_download_url=direct_url, 
+            media_type=actual_type
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ خطا در پردازش لینک اینستاگرام: {e}")
+        await message.reply_text("❌ متأسفانه در حال حاضر مشکلی در دانلود این پست به وجود آمده است.")
+
 
 
 # ========== تابع کمکی برای ارسال مستقیم از کش ==========
