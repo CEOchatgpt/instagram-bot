@@ -1,12 +1,11 @@
-# bot.py - نسخه نهایی با پشتیبانی کامل از Inline Mode و دکمه‌های بازگشت
+# bot.py - نسخه نهایی با پشتیبانی کامل از دیتابیس کانال، شناسه یکتا و تنظیمات دائمی
 
 import asyncio
 import logging
 import time
+import re
 from collections import defaultdict
 from uuid import uuid4
-from database import get_user_mode, set_user_mode, get_user_settings_keyboard
-from channel_cache import save_profile_to_channel, get_profile_from_channel
 
 from telegram import (
     Update, InputMediaVideo, InputMediaPhoto,
@@ -29,19 +28,43 @@ from rapidapi_service import (
     check_and_get_stories
 )
 
+from database import (
+    get_user_mode, 
+    set_user_mode, 
+    get_user_settings_keyboard,
+    init_db
+)
 
+from channel_cache import (
+    save_profile_to_channel,
+    get_profile_from_channel,
+    save_media_to_channel,
+    get_media_from_channel,
+    save_reels_list_to_channel,
+    get_reels_list_from_channel,
+    save_highlights_list_to_channel,
+    get_highlights_list_from_channel,
+    save_user_setting_to_channel,
+    get_user_setting_from_channel
+)
+
+from extract_instagram_id import extract_instagram_id
+
+# تنظیمات لاگ
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+# Rate Limiting
 RATE_LIMIT = 20
 WINDOW_SECS = 60
 user_requests: dict[int, list[float]] = defaultdict(list)
 
 
 def is_rate_limited(user_id: int) -> tuple[bool, int]:
+    """بررسی محدودیت نرخ درخواست"""
     now = time.time()
     user_requests[user_id] = [t for t in user_requests[user_id] if now - t < WINDOW_SECS]
     
@@ -54,9 +77,12 @@ def is_rate_limited(user_id: int) -> tuple[bool, int]:
     return False, 0
 
 
+# ========== دستور start ==========
+
 async def start(update: Update, context):
     """شروع ربات - پشتیبانی از دیپ لینک"""
     
+    # دیپ لینک برای اینلاین مود
     if context.args and len(context.args) > 0:
         param = context.args[0]
         
@@ -77,17 +103,17 @@ async def start(update: Update, context):
             await stories_command(update, context, username=username)
             return
     
+    # منوی اصلی
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 دانلود با لینک", callback_data="new_download")],
         [InlineKeyboardButton("👤 پروفایل", callback_data="show_profile_menu"),
          InlineKeyboardButton("🎬 ریلز", callback_data="show_reels_menu")],
         [InlineKeyboardButton("📚 هایلایت", callback_data="show_highlights_menu"),
          InlineKeyboardButton("📖 استوری", callback_data="show_stories_menu")],
-         [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings")],
-         [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
+        [InlineKeyboardButton("⚙️ تنظیمات", callback_data="show_settings")],
+        [InlineKeyboardButton("❓ راهنما", callback_data="show_help")]
     ])
-                    
-
+    
     await update.effective_message.reply_text(
         f"<b>👋 سلام {update.effective_user.first_name}!</b>\n\n"
         f"به ربات دانلود اینستاگرام خوش اومدی 🎉\n\n"
@@ -101,7 +127,7 @@ async def start(update: Update, context):
     )
 
 
-# ========== توابع اصلی ==========
+# ========== توابع پروفایل ==========
 
 async def profile_command(update: Update, context, username=None):
     """دریافت پروفایل با دکمه بازگشت"""
@@ -158,6 +184,8 @@ async def profile_command(update: Update, context, username=None):
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
+# ========== توابع ریلز ==========
+
 async def reels_command(update: Update, context, username=None):
     """دریافت ریل‌ها با دکمه بازگشت"""
     if username is None:
@@ -206,50 +234,6 @@ async def reels_command(update: Update, context, username=None):
         logger.error(f"Error in reels_command: {e}")
         await processing_msg.edit_text(f"❌ خطا: {str(e)[:100]}")
 
-
-async def highlights_command(update: Update, context, username=None):
-    """دریافت هایلایت‌ها با دکمه بازگشت"""
-    if username is None:
-        if not context.args:
-            await update.effective_message.reply_text(
-                "⚠️ نحوه استفاده:\n<code>/highlights username</code>\n\nمثال: /highlights cristiano",
-                parse_mode='HTML'
-            )
-            return
-        username = context.args[0].strip("@")
-    
-    context.user_data['last_username'] = username
-    processing = await update.effective_message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
-
-    try:
-        highlights_list = await get_instagram_highlights(username, context)
-
-        if not highlights_list:
-            await processing.edit_text(f"❌ هیچ هایلایتی برای @{username} پیدا نشد.")
-            return
-
-        context.user_data['current_highlights'] = highlights_list
-        
-        keyboard = []
-        for i, h in enumerate(highlights_list[:20]):
-            title = h.get("title", "هایلایت")
-            count = h.get("count", 0)
-            button_text = f"📚 {title[:30]}" + (f" ({count})" if count else "")
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"hl_{i}")])
-        
-        keyboard.append([InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")])
-
-        await processing.edit_text(
-            f"📚 هایلایت‌های @{username}:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    except Exception as e:
-        logger.error(f"Error in highlights_command: {e}")
-        await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
-
-
-# ========== توابع کمکی ==========
 
 async def show_reel_item(update: Update, context, username: str, index: int):
     """نمایش یک ریل با دکمه بازگشت"""
@@ -334,7 +318,52 @@ async def show_reel_item(update: Update, context, username: str, index: int):
             )
 
 
+# ========== توابع هایلایت ==========
+
+async def highlights_command(update: Update, context, username=None):
+    """دریافت هایلایت‌ها با دکمه بازگشت"""
+    if username is None:
+        if not context.args:
+            await update.effective_message.reply_text(
+                "⚠️ نحوه استفاده:\n<code>/highlights username</code>\n\nمثال: /highlights cristiano",
+                parse_mode='HTML'
+            )
+            return
+        username = context.args[0].strip("@")
+    
+    context.user_data['last_username'] = username
+    processing = await update.effective_message.reply_text(f"📚 در حال دریافت هایلایت‌های @{username}...")
+
+    try:
+        highlights_list = await get_instagram_highlights(username, context)
+
+        if not highlights_list:
+            await processing.edit_text(f"❌ هیچ هایلایتی برای @{username} پیدا نشد.")
+            return
+
+        context.user_data['current_highlights'] = highlights_list
+        
+        keyboard = []
+        for i, h in enumerate(highlights_list[:20]):
+            title = h.get("title", "هایلایت")
+            count = h.get("count", 0)
+            button_text = f"📚 {title[:30]}" + (f" ({count})" if count else "")
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"hl_{i}")])
+        
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")])
+
+        await processing.edit_text(
+            f"📚 هایلایت‌های @{username}:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    except Exception as e:
+        logger.error(f"Error in highlights_command: {e}")
+        await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
+
+
 async def handle_highlight_callback(update: Update, context):
+    """هندلر دانلود هایلایت"""
     query = update.callback_query
     await query.answer()
     
@@ -413,72 +442,7 @@ async def handle_highlight_callback(update: Update, context):
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
-async def send_media_group(chat_id, context, items, caption):
-    media_group = []
-    for i, item in enumerate(items):
-        current_caption = caption if i == 0 else None
-        try:
-            if item["type"] == "video":
-                media_group.append(InputMediaVideo(media=item["url"], caption=current_caption, supports_streaming=True))
-            else:
-                media_group.append(InputMediaPhoto(media=item["url"], caption=current_caption))
-        except:
-            continue
-
-    for i in range(0, len(media_group), 10):
-        try:
-            await context.bot.send_media_group(chat_id=chat_id, media=media_group[i:i+10])
-            await asyncio.sleep(1.5)
-        except:
-            await asyncio.sleep(2)
-
-
-async def show_settings_menu(update: Update, context, query=None):
-    user_id = update.effective_user.id
-    current_mode = await get_user_mode(user_id, context)
-    
-    import time
-    mode_text = "🎬 آلبوم ترکیبی" if current_mode == "album" else "📁 فایل (جداگانه)"
-    
-    text = (
-        f"⚙️ <b>تنظیمات ارسال</b>\n\n"
-        f"حالت فعلی: {mode_text}\n\n"
-        f"📌 <b>توضیحات:</b>\n"
-        f"• آلبوم ترکیبی: چند رسانه در یک پیام\n"
-        f"• فایل جداگانه: هر رسانه به صورت جداگانه\n\n"
-        f"<i>🕐 آخرین بروزرسانی: {time.strftime('%H:%M:%S')}</i>"
-    )
-    keyboard = get_user_settings_keyboard(user_id)
-    
-    if query:
-        try:
-            await query.edit_message_text(text, parse_mode='HTML', reply_markup=keyboard)
-        except Exception as e:
-            if "Message is not modified" in str(e):
-                await query.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
-            else:
-                raise e
-    else:
-        await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
-
-
-async def help_command(update: Update, context):
-    await update.effective_message.reply_text(
-        "📖 <b>راهنمای ربات</b>\n\n"
-        "🔹 <b>ارسال لینک:</b>\n"
-        "   هر لینکی از اینستاگرام (پست، ریلز، استوری، هایلایت)\n\n"
-        "🔹 <b>دستورات:</b>\n"
-        "   /profile @username - اطلاعات پروفایل\n"
-        "   /reels @username - دریافت ریل‌ها\n"
-        "   /highlights @username - دریافت هایلایت‌ها\n"
-        "   /settings - تنظیمات ارسال\n"
-        "   /help - این راهنما",
-        parse_mode='HTML'
-    )
-
-
-async def settings_command(update: Update, context):
-    await show_settings_menu(update, context)
+# ========== توابع استوری ==========
 
 async def stories_command(update: Update, context, username=None):
     """دریافت استوری‌های کاربر"""
@@ -507,7 +471,6 @@ async def stories_command(update: Update, context, username=None):
         
         caption = f"📖 استوری‌های @{username}"
         
-        # دکمه بازگشت
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")]
         ])
@@ -538,9 +501,7 @@ async def stories_command(update: Update, context, username=None):
                     reply_markup=reply_markup
                 )
         else:
-            # چند استوری - به صورت آلبوم بفرست
             await send_media_group(update.effective_chat.id, context, items, caption)
-            # یه پیام جداگانه با دکمه بازگشت
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=f"✅ {len(items)} استوری از @{username} ارسال شد.\n\n🔙 برای بازگشت به منوی انتخاب کلیک کن:",
@@ -554,7 +515,86 @@ async def stories_command(update: Update, context, username=None):
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
 
 
+# ========== توابع کمکی ==========
+
+async def send_media_group(chat_id, context, items, caption):
+    """ارسال گروهی عکس و ویدیو"""
+    media_group = []
+    for i, item in enumerate(items):
+        current_caption = caption if i == 0 else None
+        try:
+            if item["type"] == "video":
+                media_group.append(InputMediaVideo(media=item["url"], caption=current_caption, supports_streaming=True))
+            else:
+                media_group.append(InputMediaPhoto(media=item["url"], caption=current_caption))
+        except:
+            continue
+
+    for i in range(0, len(media_group), 10):
+        try:
+            await context.bot.send_media_group(chat_id=chat_id, media=media_group[i:i+10])
+            await asyncio.sleep(1.5)
+        except:
+            await asyncio.sleep(2)
+
+
+async def show_settings_menu(update: Update, context, query=None):
+    """نمایش منوی تنظیمات"""
+    user_id = update.effective_user.id
+    current_mode = await get_user_mode(user_id, context)
+    
+    mode_text = "🎬 آلبوم ترکیبی" if current_mode == "album" else "📁 فایل (جداگانه)"
+    
+    text = (
+        f"⚙️ <b>تنظیمات ارسال</b>\n\n"
+        f"حالت فعلی: {mode_text}\n\n"
+        f"📌 <b>توضیحات:</b>\n"
+        f"• آلبوم ترکیبی: چند رسانه در یک پیام\n"
+        f"• فایل جداگانه: هر رسانه به صورت جداگانه\n\n"
+        f"<i>🕐 آخرین بروزرسانی: {time.strftime('%H:%M:%S')}</i>"
+    )
+    keyboard = get_user_settings_keyboard(user_id)
+    
+    if query:
+        try:
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=keyboard)
+        except Exception as e:
+            if "Message is not modified" in str(e):
+                await query.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+            else:
+                raise e
+    else:
+        await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
+
+
+async def help_command(update: Update, context):
+    """دستور راهنما"""
+    await update.effective_message.reply_text(
+        "📖 <b>راهنمای ربات</b>\n\n"
+        "🔹 <b>ارسال لینک:</b>\n"
+        "   هر لینکی از اینستاگرام (پست، ریلز، استوری، هایلایت)\n\n"
+        "🔹 <b>دستورات:</b>\n"
+        "   /profile @username - اطلاعات پروفایل\n"
+        "   /reels @username - دریافت ریل‌ها\n"
+        "   /highlights @username - دریافت هایلایت‌ها\n"
+        "   /stories @username - دریافت استوری‌ها\n"
+        "   /settings - تنظیمات ارسال\n"
+        "   /help - این راهنما\n\n"
+        "🔹 <b>نکته:</b>\n"
+        "   می‌توانید فقط شناسه پست (مثلاً DZcDzv9iJOJ) را هم ارسال کنید.",
+        parse_mode='HTML'
+    )
+
+
+async def settings_command(update: Update, context):
+    """دستور تنظیمات"""
+    await show_settings_menu(update, context)
+
+
+# ========== هندلر لینک ==========
+
 async def handle_link(update: Update, context):
+    """هندلر لینک‌های اینستاگرام"""
     url = update.message.text.strip()
     user_id = update.effective_user.id
 
@@ -562,9 +602,7 @@ async def handle_link(update: Update, context):
         await update.message.reply_text("❌ فقط لینک اینستاگرام قبول میکنم!")
         return
 
-    # ========== تشخیص لینک صفحه اصلی پیج ==========
-    import re
-    # الگوی لینک صفحه اصلی (بدون /p/, /reel/, /stories/, /tv/)
+    # تشخیص لینک صفحه اصلی پیج
     profile_pattern = r'(?:https?://)?(?:www\.)?instagram\.com/([a-zA-Z0-9_.]+)/?$'
     match = re.search(profile_pattern, url)
     
@@ -581,9 +619,7 @@ async def handle_link(update: Update, context):
                 InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
                 InlineKeyboardButton("📖 استوری", callback_data=f"quick_stories_{username}")
             ],
-            [
-                InlineKeyboardButton("❌ لغو", callback_data="back_to_main")
-            ]
+            [InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]
         ])
         
         await update.message.reply_text(
@@ -592,7 +628,8 @@ async def handle_link(update: Update, context):
             reply_markup=keyboard
         )
         return
-
+    
+    # محدودیت نرخ
     limited, wait = is_rate_limited(user_id)
     if limited:
         await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
@@ -636,6 +673,7 @@ async def handle_link(update: Update, context):
 
 
 async def handle_reel_callbacks(update: Update, context):
+    """هندلر دکمه‌های ریل"""
     query = update.callback_query
     await query.answer()
     
@@ -693,8 +731,10 @@ async def handle_reel_callbacks(update: Update, context):
                 await msg.edit_text(f"❌ خطا در دانلود: {str(e)[:100]}")
 
 
+# ========== اینلاین مود ==========
+
 async def inline_query(update: Update, context):
-    """هندلر جستجوی اینلاین - با دکمه باز کردن بات"""
+    """هندلر جستجوی اینلاین"""
     query = update.inline_query.query.strip()
     bot_username = context.bot.username
     
@@ -772,18 +812,55 @@ async def inline_query(update: Update, context):
     await update.inline_query.answer(results, cache_time=60, is_personal=True)
 
 
+# ========== هندلر ورودی مستقیم ==========
+
 async def handle_direct_input(update: Update, context):
     """هندلر برای ورودی مستقیم توی بات"""
     text = update.message.text.strip()
 
-    # اضافه شده: چک کردن شناسه یکتا (مثل 96TXg1muSP)
-    import re
+    # چک کردن شناسه یکتا (مثل 96TXg1muSP یا DZcDzv9iJOJ)
     if re.match(r'^[A-Za-z0-9_-]{8,15}$', text):
         # کاربر یک شناسه یکتا فرستاده
-        await update.message.reply_text(f"🔍 شناسه {text} دریافت شد. در حال جستجو...")
-        fake_url = f"https://www.instagram.com/p/{text}/"
-        update.message.text = fake_url
-        # ادامه میده به handle_link
+        processing = await update.message.reply_text(f"🔍 شناسه {text} دریافت شد. در حال جستجو...")
+        
+        # تلاش برای پیدا کردن در دیتابیس محلی
+        from index_manager import search_by_media_id
+        found = await search_by_media_id(text)
+        
+        if found:
+            await processing.edit_text(f"✅ محتوا با شناسه {text} در دیتابیس پیدا شد!")
+            # ساخت URL فرضی و تلاش برای بازیابی
+            fake_url = f"https://www.instagram.com/p/{text}/"
+            result = await get_instagram_media(fake_url, context)
+            if result and result.get("items"):
+                await processing.delete()
+                # ارسال محتوا
+                items = result.get("items", [])
+                caption = result.get("caption", "دانلود از اینستاگرام")
+                default_mode = await get_user_mode(update.effective_user.id, context)
+                
+                if len(items) == 1:
+                    item = items[0]
+                    if default_mode == "file":
+                        await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption)
+                    else:
+                        if item["type"] == "video":
+                            await context.bot.send_video(update.effective_chat.id, item["url"], supports_streaming=True, caption=caption)
+                        else:
+                            await context.bot.send_photo(update.effective_chat.id, item["url"], caption=caption)
+                else:
+                    if default_mode == "album":
+                        await send_media_group(update.effective_chat.id, context, items, caption)
+                    else:
+                        for i, item in enumerate(items):
+                            await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption if i == 0 else None)
+                            await asyncio.sleep(0.5)
+                return
+        else:
+            await processing.edit_text(f"📥 شناسه {text} در دیتابیس نیست. در حال دریافت از اینستاگرام...")
+            fake_url = f"https://www.instagram.com/p/{text}/"
+            update.message.text = fake_url
+            # ادامه میده به handle_link
     
     if text.startswith('@'):
         username = text.lstrip('@')
@@ -797,9 +874,7 @@ async def handle_direct_input(update: Update, context):
                 InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
                 InlineKeyboardButton("📖 استوری", callback_data=f"quick_stories_{username}")
             ],
-            [
-                InlineKeyboardButton("❌ لغو", callback_data="back_to_main")
-            ]
+            [InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]
         ])
         
         await update.message.reply_text(
@@ -816,7 +891,10 @@ async def handle_direct_input(update: Update, context):
     await update.message.reply_text("❌ لطفاً یک یوزرنیم (با @) یا لینک اینستاگرام بفرست.")
 
 
+# ========== هندلر کالبک ==========
+
 async def handle_callback(update: Update, context):
+    """هندلر تمام دکمه‌های شیشه‌ای"""
     query = update.callback_query
     await query.answer()
     
@@ -836,21 +914,15 @@ async def handle_callback(update: Update, context):
                     InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
                     InlineKeyboardButton("📖 استوری", callback_data=f"quick_stories_{username}")
                 ],
-                [
-                    InlineKeyboardButton("❌ لغو", callback_data="back_to_main")
-                ]
+                [InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]
             ])
             
-            # پیام جدید بفرست
             await query.message.reply_text(
                 f"🔍 <b>{username}</b>\n\nکدوم اطلاعات رو میخوای؟",
                 parse_mode='HTML',
                 reply_markup=keyboard
             )
-            
-            # پیام قبلی (ریلز یا پروفایل) رو پاک کن
             await query.message.delete()
-            
         else:
             await query.edit_message_text(
                 "🔙 به منوی اصلی برگشتی.",
@@ -879,18 +951,12 @@ async def handle_callback(update: Update, context):
                     keyboard.append([InlineKeyboardButton(button_text, callback_data=f"hl_{i}")])
                 keyboard.append([InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")])
                 
-                # پیام جدید بفرست
                 await query.message.reply_text(
                     f"📚 هایلایت‌های @{username}:",
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
-                
-                # پیام "در حال دریافت" رو پاک کن
                 await processing.delete()
-                
-                # پیام قبلی (هایلایت دانلود شده) رو پاک کن
                 await query.message.delete()
-                
             except Exception as e:
                 await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
         else:
@@ -901,7 +967,6 @@ async def handle_callback(update: Update, context):
                 ])
             )
         return
-        
     
     # ========== دکمه‌های سریع ==========
     if data.startswith("quick_profile_"):
@@ -985,7 +1050,9 @@ async def handle_callback(update: Update, context):
     elif data == "back_to_main":
         await start(update, context)
 
-#حذف کش توسط ادمین 
+
+# ========== دستورات ادمین ==========
+
 async def clear_cache_command(update: Update, context):
     """پاک کردن کش حافظه (فقط برای ادمین)"""
     user_id = update.effective_user.id
@@ -999,18 +1066,51 @@ async def clear_cache_command(update: Update, context):
     _memory_cache.clear()
     
     # پاک کردن کش حافظه از channel_cache
-    from channel_cache import _memory_cache as channel_memory_cache
-    channel_memory_cache.clear()
+    from channel_cache import clear_memory_cache
+    clear_memory_cache()
     
-    # پاک کردن تنظیمات کاربر
-    from user_settings import _user_modes
-    _user_modes.clear()
+    # پاک کردن کش تنظیمات کاربر از database
+    from database import _user_cache
+    _user_cache.clear()
     
     await update.message.reply_text("✅ تمام کش‌های حافظه پاک شد.")
 
+
+async def stats_command(update: Update, context):
+    """نمایش آمار ربات (فقط برای ادمین)"""
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما دسترسی به این دستور ندارید.")
+        return
+    
+    from index_manager import get_index_stats
+    stats = await get_index_stats()
+    
+    text = f"""📊 <b>آمار ربات</b>
+━━━━━━━━━━━━━━━━
+📦 کل آیتم‌های ایندکس: {stats['total_items']}
+
+📁 <b>تفکیک شده:</b>
+"""
+    for data_type, count in stats['by_type'].items():
+        text += f"   • {data_type}: {count}\n"
+    
+    await update.message.reply_text(text, parse_mode='HTML')
+
+
+# ========== main ==========
+
 def main():
+    """راه‌اندازی اصلی ربات"""
+    
+    # مقداردهی اولیه دیتابیس
+    init_db()
+    
+    # ساخت اپلیکیشن
     app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
     
+    # دستورات
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("settings", settings_command))
@@ -1018,13 +1118,14 @@ def main():
     app.add_handler(CommandHandler("highlights", highlights_command))
     app.add_handler(CommandHandler("reels", reels_command))
     app.add_handler(CommandHandler("stories", stories_command))
-    #دسترسی پاک کردن کش توسط ادمین
     app.add_handler(CommandHandler("clearcache", clear_cache_command))
-
+    app.add_handler(CommandHandler("stats", stats_command))
+    
+    # هندلرها
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_input))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(InlineQueryHandler(inline_query))
-
+    
     logger.info("🤖 ربات در حال اجراست...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
