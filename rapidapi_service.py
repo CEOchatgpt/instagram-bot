@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه کامل با پشتیبانی از کش دو لایه برای همه محتواها
+# rapidapi_service.py - نسخه فوق‌العاده سبک برای پروفایل
 
 import re
 import aiohttp
@@ -8,7 +8,6 @@ import logging
 import hashlib
 import time
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
-from database import redis_client 
 from channel_cache import get_profile_from_channel, save_profile_to_channel, get_media_from_channel, save_media_to_channel
 
 logger = logging.getLogger(__name__)
@@ -65,70 +64,22 @@ def format_caption(raw) -> str:
     return text
 
 
-# ========== توابع کش لایه 1 (Redis - موقت) ==========
-
-def get_cached_profile(username: str):
-    """دریافت پروفایل از کش Redis"""
-    if not redis_client:
-        return None
-    key = f"cache:profile:{username}"
-    data = redis_client.get(key)
-    if data:
-        return json.loads(data)
-    return None
-
-def set_cached_profile(username: str, profile_data: dict, ttl_seconds: int = 3600):
-    """ذخیره پروفایل در کش Redis"""
-    if not redis_client:
-        return
-    key = f"cache:profile:{username}"
-    redis_client.setex(key, ttl_seconds, json.dumps(profile_data))
-    logger.info(f"✅ پروفایل {username} در Redis کش شد (TTL: {ttl_seconds}s)")
-
-def get_cached_media(media_key: str):
-    """دریافت مدیا از کش Redis"""
-    if not redis_client:
-        return None
-    key_hash = hashlib.md5(media_key.encode()).hexdigest()
-    key = f"cache:media:{key_hash}"
-    data = redis_client.get(key)
-    if data:
-        return json.loads(data)
-    return None
-
-def set_cached_media(media_key: str, media_data: dict, ttl_seconds: int = 7200):
-    """ذخیره مدیا در کش Redis"""
-    if not redis_client:
-        return
-    key_hash = hashlib.md5(media_key.encode()).hexdigest()
-    key = f"cache:media:{key_hash}"
-    redis_client.setex(key, ttl_seconds, json.dumps(media_data))
-    logger.info(f"✅ مدیا در Redis کش شد (TTL: {ttl_seconds}s)")
-
-
-# ========== تابع پروفایل (کش دو لایه) ==========
+# ========== تابع پروفایل (فوق‌العاده سبک) ==========
 
 async def get_instagram_profile(username: str, context=None):
-    """دریافت پروفایل - کش دو لایه (Redis + کانال تلگرام)"""
+    """دریافت پروفایل - فقط نام کامل و عکس پروفایل"""
     
-    # لایه 1: کش Redis (سریع، موقت)
-    cached = get_cached_profile(username)
-    if cached:
-        logger.info(f"📦 پروفایل {username} از Redis کش برگردانده شد")
-        return cached
-    
-    # لایه 2: کش دائمی (کانال تلگرام)
+    # لایه 1: کش کانال تلگرام
     if context:
         try:
             channel_cached = await get_profile_from_channel(context, username)
             if channel_cached:
                 logger.info(f"🏦 پروفایل {username} از کانال دیتابیس برگردانده شد")
-                set_cached_profile(username, channel_cached, ttl_seconds=3600)
                 return channel_cached
         except Exception as e:
             logger.warning(f"خطا در خواندن از کانال دیتابیس: {e}")
     
-    # لایه 3: API
+    # لایه 2: API
     logger.info(f"🌐 پروفایل {username} در کش نبود - ارسال درخواست به API")
     
     headers = {
@@ -153,24 +104,18 @@ async def get_instagram_profile(username: str, context=None):
                 if not user_data:
                     return None
                 
-                # ========== نسخه سبک پروفایل (فقط اطلاعات پایه) ==========
-                # فقط یوزرنیم، نام کامل، بیوگرافی و تعداد پست
+                # ========== فقط حداقل اطلاعات ==========
                 profile = {
                     "username": user_data.get("username") or username,
-                    "full_name": user_data.get("full_name") or username,
-                    "biography": user_data.get("biography") or "بدون بیو",
-                    # "followers": user_data.get("follower_count", 0),  # کامنت شده برای کاهش مصرف API
-                    # "following": user_data.get("following_count", 0),  # کامنت شده
-                    "posts": user_data.get("media_count", 0),
+                    "full_name": user_data.get("full_name") or username,  # فقط نام کامل
                     "profile_pic": user_data.get("hd_profile_pic_url_info", {}).get("url") or user_data.get("profile_pic_url"),
-                    # "is_private": user_data.get("is_private", False),  # کامنت شده
-                    # "is_verified": user_data.get("is_verified", False),  # کامنت شده
+                    # همه چیز دیگه حذف شده: بیوگرافی، تعداد پست، فالوور، فالووینگ، وضعیت خصوصی، تأیید شده
                 }
                 
-                # ذخیره در هر دو لایه
-                set_cached_profile(username, profile, ttl_seconds=3600)
-                if context:
+                # ذخیره در کانال برای دفعات بعد
+                if context and profile.get("profile_pic"):
                     await save_profile_to_channel(context, username, profile)
+                    logger.info(f"✅ پروفایل {username} در کانال دیتابیس ذخیره شد")
                 
                 return profile
                 
@@ -179,10 +124,10 @@ async def get_instagram_profile(username: str, context=None):
         return None
 
 
-# ========== توابع مدیا (پست، ریلز، استوری، هایلایت) ==========
+# ========== توابع مدیا (بدون تغییر) ==========
 
 async def get_instagram_media(post_url: str, context=None) -> dict | None:
-    """دریافت محتوای پست - کش دو لایه (Redis + کانال تلگرام)"""
+    """دریافت محتوای پست - کش فقط از کانال تلگرام"""
     
     if not post_url or "instagram.com" not in post_url:
         return None
@@ -190,24 +135,17 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     # کلید یکتا برای این محتوا
     media_key = post_url
     
-    # لایه 1: کش Redis
-    cached = get_cached_media(media_key)
-    if cached:
-        logger.info(f"📦 مدیا {post_url[:50]}... از Redis کش برگردانده شد")
-        return cached
-    
-    # لایه 2: کش کانال تلگرام
+    # لایه 1: کش کانال تلگرام
     if context:
         try:
             channel_cached = await get_media_from_channel(context, media_key)
             if channel_cached:
                 logger.info(f"🏦 مدیا {post_url[:50]}... از کانال دیتابیس برگردانده شد")
-                set_cached_media(media_key, channel_cached, ttl_seconds=7200)
                 return channel_cached
         except Exception as e:
             logger.warning(f"خطا در خواندن مدیا از کانال: {e}")
     
-    # لایه 3: API
+    # لایه 2: API
     logger.info(f"🌐 مدیا {post_url[:50]}... در کش نبود - ارسال درخواست به API")
     
     # تشخیص استوری
@@ -215,7 +153,6 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     if story_match:
         result = await get_instagram_story(story_match.group(1), story_match.group(2), context)
         if result and result.get("items"):
-            set_cached_media(media_key, result, ttl_seconds=7200)
             if context:
                 await save_media_to_channel(context, media_key, result)
         return result
@@ -270,16 +207,15 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     
     result = {"caption": caption, "items": items} if items else None
     
-    # ذخیره در هر دو لایه
-    if result:
-        set_cached_media(media_key, result, ttl_seconds=7200)
-        if context:
-            await save_media_to_channel(context, media_key, result)
+    # ذخیره در کانال برای دفعات بعد
+    if result and context:
+        await save_media_to_channel(context, media_key, result)
+        logger.info(f"✅ مدیا در کانال دیتابیس ذخیره شد")
     
     return result
 
 
-# ========== توابع استوری و هایلایت ==========
+# ========== توابع استوری (بدون تغییر) ==========
 
 async def get_instagram_story(username: str, story_id: str = None, context=None):
     """دریافت استوری کاربر با پشتیبانی از کش"""
@@ -291,11 +227,15 @@ async def get_instagram_story(username: str, story_id: str = None, context=None)
     
     story_key = f"story:{username}:{story_id if story_id else 'latest'}"
     
-    # چک کش
-    cached = get_cached_media(story_key)
-    if cached:
-        logger.info(f"📦 استوری {username} از Redis کش برگردانده شد")
-        return cached
+    # چک کش کانال
+    if context:
+        try:
+            channel_cached = await get_media_from_channel(context, story_key)
+            if channel_cached:
+                logger.info(f"🏦 استوری {username} از کانال دیتابیس برگردانده شد")
+                return channel_cached
+        except Exception as e:
+            logger.warning(f"خطا در خواندن استوری از کانال: {e}")
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -329,10 +269,8 @@ async def get_instagram_story(username: str, story_id: str = None, context=None)
                 
                 result = {"caption": f"📖 استوری @{username}", "items": items} if items else None
                 
-                if result and result.get("items"):
-                    set_cached_media(story_key, result, ttl_seconds=3600)
-                    if context:
-                        await save_media_to_channel(context, story_key, result)
+                if result and result.get("items") and context:
+                    await save_media_to_channel(context, story_key, result)
                 
                 return result
                 
@@ -354,28 +292,21 @@ async def get_instagram_highlight_stories(highlight_id: str, username: str = Non
 
 
 async def check_and_get_stories(username: str, context=None):
-    """بررسی و دریافت استوری‌های کاربر با کش در Redis و کانال"""
+    """بررسی و دریافت استوری‌های کاربر با کش در کانال"""
     
     story_key = f"story:{username}:latest"
     
-    # لایه 1: چک کش Redis
-    cached = get_cached_media(story_key)
-    if cached:
-        logger.info(f"📦 استوری‌های {username} از Redis کش برگردانده شد")
-        return cached
-    
-    # لایه 2: چک کش کانال
+    # لایه 1: کش کانال تلگرام
     if context:
         try:
             channel_cached = await get_media_from_channel(context, story_key)
             if channel_cached:
                 logger.info(f"🏦 استوری‌های {username} از کانال دیتابیس برگردانده شد")
-                set_cached_media(story_key, channel_cached, ttl_seconds=1800)  # 30 دقیقه
                 return channel_cached
         except Exception as e:
             logger.warning(f"خطا در خواندن استوری از کانال: {e}")
     
-    # لایه 3: از API بگیر
+    # لایه 2: از API بگیر
     logger.info(f"🌐 استوری‌های {username} در کش نبود - ارسال درخواست به API")
     
     headers = {
@@ -400,14 +331,12 @@ async def check_and_get_stories(username: str, context=None):
                     if not isinstance(story, dict):
                         continue
                     
-                    # چک کردن ویدیو
                     video_versions = story.get("video_versions") or story.get("video")
                     if video_versions and isinstance(video_versions, list) and video_versions:
                         best = max(video_versions, key=lambda x: x.get("height", 0) or 0)
                         items.append({"type": "video", "url": best.get("url")})
                         continue
                     
-                    # چک کردن عکس
                     candidates = story.get("image_versions2", {}).get("candidates", [])
                     if candidates:
                         best = max(candidates, key=lambda x: x.get("height", 0))
@@ -415,16 +344,11 @@ async def check_and_get_stories(username: str, context=None):
                 
                 result = items if items else None
                 
-                # ذخیره در کش (استوری‌ها زود منقضی میشن، TTL کم)
-                if result:
-                    # ذخیره در Redis با TTL 30 دقیقه
-                    set_cached_media(story_key, result, ttl_seconds=1800)
-                    
-                    # ذخیره در کانال تلگرام
-                    if context:
-                        story_data = {"caption": f"📖 استوری‌های @{username}", "items": result}
-                        await save_media_to_channel(context, story_key, story_data)
-                        logger.info(f"✅ استوری‌های {username} در کانال دیتابیس ذخیره شد")
+                # ذخیره در کانال تلگرام
+                if result and context:
+                    story_data = {"caption": f"📖 استوری‌های @{username}", "items": result}
+                    await save_media_to_channel(context, story_key, story_data)
+                    logger.info(f"✅ استوری‌های {username} در کانال دیتابیس ذخیره شد")
                 
                 return result
                 
@@ -433,7 +357,7 @@ async def check_and_get_stories(username: str, context=None):
         return None
 
 
-# ========== تابع ریلز ==========
+# ========== تابع ریلز (بدون تغییر) ==========
 
 async def get_user_reels_v2(username: str, context=None):
     """دریافت ریل‌ها با ذخیره در کش و کانال"""
@@ -445,11 +369,15 @@ async def get_user_reels_v2(username: str, context=None):
     
     reels_key = f"reels:{username}"
     
-    # چک کش برای لیست ریل‌ها
-    cached = get_cached_media(reels_key)
-    if cached:
-        logger.info(f"📦 لیست ریل‌های {username} از Redis کش برگردانده شد")
-        return cached
+    # چک کش کانال
+    if context:
+        try:
+            channel_cached = await get_media_from_channel(context, reels_key)
+            if channel_cached:
+                logger.info(f"🏦 لیست ریل‌های {username} از کانال دیتابیس برگردانده شد")
+                return channel_cached
+        except Exception as e:
+            logger.warning(f"خطا در خواندن ریل از کانال: {e}")
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -517,11 +445,7 @@ async def get_user_reels_v2(username: str, context=None):
                             if context:
                                 reel_key = f"reel:{username}:{post.get('id', '')}"
                                 reel_result = {"caption": caption_text, "items": [{"type": "video", "url": video_url}]}
-                                
-                                # چک کن قبلاً ذخیره شده؟
-                                if not get_cached_media(reel_key):
-                                    set_cached_media(reel_key, reel_result, ttl_seconds=86400)  # 24 ساعت
-                                    await save_media_to_channel(context, reel_key, reel_result)
+                                await save_media_to_channel(context, reel_key, reel_result)
                 
                 result_data = {
                     "items": items,
@@ -529,11 +453,9 @@ async def get_user_reels_v2(username: str, context=None):
                     "username": username
                 } if items else None
                 
-                # ذخیره لیست ریل‌ها در کش
-                if result_data:
-                    set_cached_media(reels_key, result_data, ttl_seconds=3600)  # 1 ساعت
-                    if context:
-                        await save_media_to_channel(context, reels_key, result_data)
+                # ذخیره لیست ریل‌ها در کش کانال
+                if result_data and context:
+                    await save_media_to_channel(context, reels_key, result_data)
                 
                 return result_data
                 
@@ -550,11 +472,15 @@ async def get_instagram_highlights(username: str, context=None):
     
     highlights_key = f"highlights:{username}"
     
-    # چک کش
-    cached = get_cached_media(highlights_key)
-    if cached:
-        logger.info(f"📦 لیست هایلایت‌های {username} از Redis کش برگردانده شد")
-        return cached
+    # چک کش کانال
+    if context:
+        try:
+            channel_cached = await get_media_from_channel(context, highlights_key)
+            if channel_cached:
+                logger.info(f"🏦 لیست هایلایت‌های {username} از کانال دیتابیس برگردانده شد")
+                return channel_cached
+        except Exception as e:
+            logger.warning(f"خطا در خواندن هایلایت از کانال: {e}")
     
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -586,11 +512,9 @@ async def get_instagram_highlights(username: str, context=None):
                                 "cover": h.get("cover_url") or h.get("cover"),
                             })
                 
-                # ذخیره در کش
-                if highlights:
-                    set_cached_media(highlights_key, highlights, ttl_seconds=21600)  # 6 ساعت
-                    if context:
-                        await save_media_to_channel(context, highlights_key, highlights)
+                # ذخیره در کش کانال
+                if highlights and context:
+                    await save_media_to_channel(context, highlights_key, highlights)
                 
                 return highlights
                 
