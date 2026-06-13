@@ -7,7 +7,6 @@ import json
 import logging
 import hashlib
 import time
-import hg_requests
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 from database import redis_client 
 from channel_cache import get_profile_from_channel, save_profile_to_channel, get_media_from_channel, save_media_to_channel
