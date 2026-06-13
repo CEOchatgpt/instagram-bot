@@ -5,7 +5,7 @@ import logging
 import time
 from collections import defaultdict
 from uuid import uuid4
-from database import get_user_mode, set_user_mode
+from database import get_user_mode, set_user_mode, get_user_settings_keyboard
 from channel_cache import save_profile_to_channel, get_profile_from_channel
 
 from telegram import (
@@ -28,7 +28,7 @@ from rapidapi_service import (
     get_user_reels_v2,
     check_and_get_stories
 )
-from user_settings import get_user_default_mode, set_user_default_mode, get_user_settings_keyboard
+
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -435,7 +435,7 @@ async def send_media_group(chat_id, context, items, caption):
 
 async def show_settings_menu(update: Update, context, query=None):
     user_id = update.effective_user.id
-    current_mode = get_user_default_mode(user_id)
+    current_mode = await get_user_mode(user_id, context)
     
     import time
     mode_text = "🎬 آلبوم ترکیبی" if current_mode == "album" else "📁 فایل (جداگانه)"
@@ -592,9 +592,7 @@ async def handle_link(update: Update, context):
             reply_markup=keyboard
         )
         return
-    
-    # ========== ادامه کد قبلی برای لینک‌های معمولی ==========
-    
+
     limited, wait = is_rate_limited(user_id)
     if limited:
         await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
