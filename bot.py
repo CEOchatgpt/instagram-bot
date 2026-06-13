@@ -5,7 +5,7 @@ import logging
 import time
 from collections import defaultdict
 from uuid import uuid4
-from database import get_user_mode_from_memory as get_user_default_mode
+from database import get_user_mode, set_user_mode
 from channel_cache import save_profile_to_channel, get_profile_from_channel
 
 from telegram import (
@@ -611,7 +611,7 @@ async def handle_link(update: Update, context):
 
         items = result.get("items", [])
         caption = result.get("caption", "دانلود از اینستاگرام")
-        default_mode = get_user_default_mode(user_id)
+        default_mode = await get_user_mode(user_id, context)
 
         if len(items) == 1:
             item = items[0]
@@ -977,11 +977,11 @@ async def handle_callback(update: Update, context):
         await help_command(update, context)
     
     elif data == "set_mode_album":
-        set_user_default_mode(user_id, "album")
+        await set_user_mode(user_id, "album", context)
         await show_settings_menu(update, context, query)
     
     elif data == "set_mode_file":
-        set_user_default_mode(user_id, "file")
+        await set_user_mode(user_id, "file", context)
         await show_settings_menu(update, context, query)
     
     elif data == "back_to_main":
