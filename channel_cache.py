@@ -25,7 +25,7 @@ TTL_INDEX = 2592000
 def get_channel_for_type(media_type: str) -> str:
     """دریافت کانال مناسب بر اساس نوع محتوا"""
     if media_type in ["video", "reel"]:
-        return DATABASE_CHANNEL_VIDEOS
+        return DATABASE_CHANNEL_REELS or DATABASE_CHANNEL_VIDEOS
     elif media_type in ["photo", "profile_pic"]:
         return DATABASE_CHANNEL_PHOTOS
     elif media_type == "profile":
@@ -38,24 +38,43 @@ def get_channel_for_type(media_type: str) -> str:
 
 async def download_file(url: str) -> bytes:
     """دانلود فایل از لینک مستقیم"""
+    if not url or not url.startswith(('http://', 'https://')):
+        logger.error(f"❌ لینک نامعتبر: {url}")
+        return None
+    
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=60) as response:
                 if response.status == 200:
-                    return await response.read()
+                    data = await response.read()
+                    logger.info(f"✅ دانلود شد: {len(data)} بایت از {url[:80]}...")
+                    return data
                 else:
-                    logger.error(f"خطا در دانلود: وضعیت {response.status}")
+                    logger.error(f"❌ خطا در دانلود: وضعیت {response.status} - {url[:80]}")
                     return None
+    except asyncio.TimeoutError:
+        logger.error(f"❌ تایم اوت در دانلود: {url[:80]}")
+        return None
     except Exception as e:
-        logger.error(f"خطا در دانلود فایل: {e}")
+        logger.error(f"❌ خطا در دانلود فایل: {e}")
         return None
 
 
-async def save_file_to_channel(context, file_url: str, media_type: str, caption: str, instagram_url: str) -> str:
+async def save_file_to_channel(context, instagram_url: str, direct_download_url: str, media_type: str, caption: str = "") -> str:
     """
-    دانلود فایل و آپلود در کانال تلگرام
-    برگرداندن file_id برای استفاده بعدی
+    ذخیره فایل در کانال تلگرام
+    - دانلود فایل از لینک مستقیم
+    - آپلود در کانال مناسب
+    - ذخیره file_id در Redis
     """
+    if not direct_download_url:
+        logger.error(f"❌ لینک دانلود مستقیم وجود ندارد برای: {instagram_url}")
+        return None
+    
+    if not direct_download_url.startswith(('http://', 'https://')):
+        logger.error(f"❌ لینک دانلود نامعتبر: {direct_download_url}")
+        return None
+    
     channel_id = get_channel_for_type(media_type)
     if not channel_id:
         logger.warning(f"⚠️ کانالی برای {media_type} تنظیم نشده!")
@@ -69,14 +88,16 @@ async def save_file_to_channel(context, file_url: str, media_type: str, caption:
         existing_file_id = redis_client.get(f"file_cache:{url_hash}")
         if existing_file_id:
             existing_file_id = existing_file_id.decode() if isinstance(existing_file_id, bytes) else existing_file_id
-            logger.info(f"📦 فایل قبلاً در کش وجود دارد: {existing_file_id[:20]}...")
+            logger.info(f"📦 فایل قبلاً در کش وجود دارد: {instagram_url[:50]}...")
             return existing_file_id
     
+    logger.info(f"📥 دانلود فایل جدید: {instagram_url[:50]}...")
+    logger.info(f"🔗 لینک دانلود: {direct_download_url[:100]}...")
+    
     # دانلود فایل
-    logger.info(f"📥 در حال دانلود فایل از: {file_url[:100]}...")
-    file_data = await download_file(file_url)
+    file_data = await download_file(direct_download_url)
     if not file_data:
-        logger.error(f"❌ دانلود فایل ناموفق بود")
+        logger.error(f"❌ دانلود فایل ناموفق: {instagram_url[:50]}")
         return None
     
     logger.info(f"✅ دانلود کامل شد: {len(file_data)} بایت")
@@ -84,16 +105,18 @@ async def save_file_to_channel(context, file_url: str, media_type: str, caption:
     # آپلود در کانال
     try:
         msg = None
-        file_caption = f"📦 #{media_type.upper()}\n🔗 {instagram_url[:100]}"
+        file_caption = f"📦 #{media_type.upper()}\n🔗 {instagram_url[:150]}"
         
-        if media_type in ["video", "reel", "story"]:
+        if media_type in ["video", "reel"]:
             msg = await context.bot.send_video(
                 chat_id=channel_id,
                 video=file_data,
                 caption=file_caption[:200],
                 timeout=120
             )
-            file_id = msg.video.file_id
+            if msg:
+                file_id = msg.video.file_id
+                logger.info(f"✅ ویدیو در کانال آپلود شد: {file_id[:30]}...")
             
         elif media_type in ["photo", "profile_pic"]:
             msg = await context.bot.send_photo(
@@ -102,7 +125,20 @@ async def save_file_to_channel(context, file_url: str, media_type: str, caption:
                 caption=file_caption[:200],
                 timeout=60
             )
-            file_id = msg.photo[-1].file_id
+            if msg:
+                file_id = msg.photo[-1].file_id
+                logger.info(f"✅ عکس در کانال آپلود شد: {file_id[:30]}...")
+            
+        elif media_type == "story":
+            msg = await context.bot.send_video(
+                chat_id=channel_id,
+                video=file_data,
+                caption=file_caption[:200],
+                timeout=120
+            )
+            if msg:
+                file_id = msg.video.file_id
+                logger.info(f"✅ استوری در کانال آپلود شد: {file_id[:30]}...")
             
         else:
             msg = await context.bot.send_document(
@@ -111,17 +147,20 @@ async def save_file_to_channel(context, file_url: str, media_type: str, caption:
                 caption=file_caption[:200],
                 timeout=120
             )
-            file_id = msg.document.file_id
+            if msg:
+                file_id = msg.document.file_id
+                logger.info(f"✅ فایل در کانال آپلود شد: {file_id[:30]}...")
         
         # ذخیره file_id در Redis
         if msg and redis_client:
             redis_client.setex(f"file_cache:{url_hash}", TTL_INDEX, file_id)
+            # ذخیره متادیتا برای دیباگ
             redis_client.setex(f"file_meta:{url_hash}", TTL_INDEX, json.dumps({
-                "media_type": media_type,
                 "instagram_url": instagram_url,
+                "media_type": media_type,
                 "created_at": time.time()
             }))
-            logger.info(f"✅ فایل در کانال ذخیره شد. File ID: {file_id[:30]}...")
+            logger.info(f"✅ فایل در Redis کش شد: {instagram_url[:50]}...")
             return file_id
             
         return None
@@ -131,10 +170,10 @@ async def save_file_to_channel(context, file_url: str, media_type: str, caption:
         return None
 
 
-async def get_file_from_cache(context, instagram_url: str, media_type: str, target_chat_id: int, caption: str = "") -> bool:
+async def send_cached_media(context, chat_id: int, instagram_url: str, media_type: str, caption: str = "") -> bool:
     """
-    بازیابی فایل از کش و ارسال مستقیم به کاربر
-    برگرداندن True اگر موفق بود
+    ارسال فایل از کش به کاربر
+    اگر فایل در کش باشد، مستقیم با file_id ارسال میشود
     """
     if not redis_client:
         return False
@@ -148,42 +187,48 @@ async def get_file_from_cache(context, instagram_url: str, media_type: str, targ
     file_id = file_id.decode() if isinstance(file_id, bytes) else file_id
     
     try:
-        # ارسال مستقیم با file_id (فوق‌العاده سریع)
-        if media_type in ["video", "reel", "story"]:
+        if media_type in ["video", "reel"]:
             await context.bot.send_video(
-                chat_id=target_chat_id, 
+                chat_id=chat_id, 
                 video=file_id, 
-                caption=caption or "📦 ارسال شده از آرشیو ربات"
+                caption=caption or "📦 ارسال شده از آرشیو ربات (بدون مصرف API)"
             )
         elif media_type in ["photo", "profile_pic"]:
             await context.bot.send_photo(
-                chat_id=target_chat_id, 
+                chat_id=chat_id, 
                 photo=file_id, 
-                caption=caption or "📸 ارسال شده از آرشیو ربات"
+                caption=caption or "📸 ارسال شده از آرشیو ربات (بدون مصرف API)"
+            )
+        elif media_type == "story":
+            await context.bot.send_video(
+                chat_id=chat_id, 
+                video=file_id, 
+                caption=caption or "📖 ارسال شده از آرشیو ربات (بدون مصرف API)"
             )
         else:
             await context.bot.send_document(
-                chat_id=target_chat_id, 
+                chat_id=chat_id, 
                 document=file_id, 
-                caption=caption or "📁 ارسال شده از آرشیو ربات"
+                caption=caption or "📁 ارسال شده از آرشیو ربات (بدون مصرف API)"
             )
         
-        logger.info(f"🚀 فایل از کش به کاربر {target_chat_id} ارسال شد")
+        logger.info(f"🚀 فایل از کش به کاربر {chat_id} ارسال شد: {instagram_url[:50]}...")
         return True
         
     except Exception as e:
         logger.warning(f"⚠️ خطا در ارسال فایل کش شده: {e}")
-        # ایندکس خراب رو پاک کن
+        # اگر file_id منقضی شده، کش را پاک کن
         redis_client.delete(f"file_cache:{url_hash}")
+        redis_client.delete(f"file_meta:{url_hash}")
         return False
 
 
-# برای سازگاری با کدهای قبلی
+# توابع سازگاری با کدهای قدیمی
 async def save_media_to_channel(context, media_url: str, media_data: dict, media_type: str = "media"):
     """نسخه سازگار با کدهای قدیمی"""
-    return await save_file_to_channel(context, media_url, media_type, "", media_url)
+    return await save_file_to_channel(context, media_url, media_url, media_type, "")
 
 
-async def send_cached_media(context, chat_id: int, instagram_url: str, media_type: str, caption: str = "") -> bool:
+async def get_media_from_channel(context, media_url: str, media_type: str = "media"):
     """نسخه سازگار با کدهای قدیمی"""
-    return await get_file_from_cache(context, instagram_url, media_type, chat_id, caption)
+    return await send_cached_media(context, 0, media_url, media_type, "")
