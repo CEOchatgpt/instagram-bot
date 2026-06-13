@@ -5,7 +5,7 @@ import logging
 import time
 from collections import defaultdict
 from uuid import uuid4
-from database import redis_client
+from database import get_user_mode_from_memory as get_user_default_mode
 from channel_cache import save_profile_to_channel, get_profile_from_channel
 
 from telegram import (
@@ -980,26 +980,26 @@ async def handle_callback(update: Update, context):
 
 #حذف کش توسط ادمین 
 async def clear_cache_command(update: Update, context):
-    """پاک کردن کش (فقط برای ادمین)"""
+    """پاک کردن کش حافظه (فقط برای ادمین)"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ شما دسترسی به این دستور ندارید.")
         return
     
-    if not redis_client:
-        await update.message.reply_text("❌ Redis در دسترس نیست.")
-        return
+    # پاک کردن کش حافظه از rapidapi_service
+    from rapidapi_service import _memory_cache
+    _memory_cache.clear()
     
-    # پاک کردن کلیدهای کش
-    keys = redis_client.keys("cache:*")
-    count = len(keys)
+    # پاک کردن کش حافظه از channel_cache
+    from channel_cache import _memory_cache as channel_memory_cache
+    channel_memory_cache.clear()
     
-    for key in keys:
-        redis_client.delete(key)
+    # پاک کردن تنظیمات کاربر
+    from user_settings import _user_modes
+    _user_modes.clear()
     
-    await update.message.reply_text(f"✅ {count} آیتم از کش پاک شد.")
-    
+    await update.message.reply_text("✅ تمام کش‌های حافظه پاک شد.")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
