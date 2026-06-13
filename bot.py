@@ -1183,7 +1183,7 @@ def main():
     # هندلرها
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_input))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(InlineQueryHandler(inline_query))
+    #app.add_handler(InlineQueryHandler(inline_query))
     
     logger.info("🤖 ربات در حال اجراست...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
