@@ -779,6 +779,7 @@ async def handle_direct_input(update: Update, context):
     text = update.message.text.strip()
 
     # اضافه شده: چک کردن شناسه یکتا (مثل 96TXg1muSP)
+    import re
     if re.match(r'^[A-Za-z0-9_-]{8,15}$', text):
         # کاربر یک شناسه یکتا فرستاده
         await update.message.reply_text(f"🔍 شناسه {text} دریافت شد. در حال جستجو...")
