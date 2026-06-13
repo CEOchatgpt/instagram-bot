@@ -5,7 +5,6 @@ import logging
 import time
 from collections import defaultdict
 from uuid import uuid4
-from database import redis_client
 from channel_cache import save_profile_to_channel, get_profile_from_channel
 
 from telegram import (
