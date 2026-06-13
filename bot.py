@@ -972,26 +972,50 @@ async def handle_callback(update: Update, context):
 
 #حذف کش توسط ادمین 
 async def clear_cache_command(update: Update, context):
-    """پاک کردن کش (فقط برای ادمین)"""
+    """پاک کردن کش یک یوزرنیم خاص"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما دسترسی به این دستور ندارید.")
+        await update.message.reply_text("❌ شما دسترسی ندارید.")
         return
     
-    if not redis_client:
-        await update.message.reply_text("❌ Redis در دسترس نیست.")
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ نحوه استفاده:\n"
+            "<code>/clearcache username</code>\n\n"
+            "مثال: /clearcache cristiano\n\n"
+            "یا:\n"
+            "<code>/clearcache all</code> - برای پاک کردن کل کش",
+            parse_mode='HTML'
+        )
         return
     
-    # پاک کردن کلیدهای کش
-    keys = redis_client.keys("cache:*")
-    count = len(keys)
+    target = context.args[0].lower()
     
-    for key in keys:
-        redis_client.delete(key)
+    if not DATABASE_CHANNEL_ID:
+        await update.message.reply_text("❌ کانال دیتابیس تنظیم نشده!")
+        return
     
-    await update.message.reply_text(f"✅ {count} آیتم از کش پاک شد.")
+    processing = await update.message.reply_text(f"🔄 در حال پاک کردن کش @{target}...")
     
+    try:
+        count = 0
+        async for message in context.bot.get_chat_history(chat_id=DATABASE_CHANNEL_ID, limit=200):
+            if message.text and message.text.startswith("📦"):
+                # اگه target == "all" یا متن پیام حاوی یوزرنیم باشه
+                if target == "all" or target in message.text.lower():
+                    try:
+                        await message.delete()
+                        count += 1
+                        await asyncio.sleep(0.3)
+                    except:
+                        pass
+        
+        await processing.edit_text(f"✅ {count} آیتم مربوط به {target} از کش حذف شد.")
+        
+    except Exception as e:
+        await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
+
 
 def main():
     app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
