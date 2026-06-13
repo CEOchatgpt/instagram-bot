@@ -452,7 +452,7 @@ async def handle_link(update: Update, context):
     # لینک معمولی - تلاش برای کش
     media_id = extract_media_id_from_url(url)
     if media_id:
-        media_key = generate_media_key(media_id, "post")
+        #media_key = generate_media_key(media_id, "post")
         # تلاش برای ارسال از کش کانال
         if await send_cached_media(context, chat_id, url, "reel"):
             return
