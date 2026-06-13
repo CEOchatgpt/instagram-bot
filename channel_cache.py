@@ -1,4 +1,4 @@
-# channel_cache.py - نسخه کامل با ایندکس و ذخیره محتوای واقعی
+# channel_cache.py - نسخه نهایی با پشتیبانی از قفل فایل، بکاپ و شناسه یکتا
 
 import logging
 import hashlib
@@ -7,7 +7,10 @@ import asyncio
 from typing import Optional, Any, List, Dict
 from telegram.ext import ContextTypes
 from config import DATABASE_CHANNEL_ID
-from index_manager import save_to_index, get_from_index, generate_storage_key, delete_from_index
+from index_manager import (
+    save_to_index, get_from_index, delete_from_index, 
+    generate_storage_key, search_by_media_id
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,7 @@ CACHE_TTL = 300  # 5 دقیقه
 
 
 def _get_memory_cache(key: str) -> Optional[Any]:
+    """دریافت از کش حافظه"""
     if key in _memory_cache:
         item = _memory_cache[key]
         if time.time() < item["expires"]:
@@ -27,19 +31,36 @@ def _get_memory_cache(key: str) -> Optional[Any]:
 
 
 def _set_memory_cache(key: str, data: Any, ttl: int = CACHE_TTL):
+    """ذخیره در کش حافظه"""
     _memory_cache[key] = {"data": data, "expires": time.time() + ttl}
 
 
 def _generate_key_hash(data_key: str) -> str:
+    """تولید هش برای کلیدهای معمولی"""
     return hashlib.md5(data_key.encode()).hexdigest()[:16]
 
 
-def _format_caption(caption: str, max_len: int = 1024) -> str:
+def _format_caption(caption: str, max_len: int = 300) -> str:
+    """فرمت کردن کپشن برای ذخیره"""
     if not caption:
         return "بدون کپشن"
     if len(caption) > max_len:
         return caption[:max_len] + "..."
     return caption
+
+
+def _extract_media_id_from_key(media_key: str) -> Optional[str]:
+    """استخراج شناسه یکتا از کلید رسانه"""
+    import re
+    patterns = [
+        r'(?:post|reel|tv):([A-Za-z0-9_-]+)',
+        r'id:([A-Za-z0-9_-]+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, media_key)
+        if match:
+            return match.group(1)
+    return None
 
 
 # ========== ذخیره و بازیابی پروفایل ==========
@@ -55,7 +76,7 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
         storage_key = generate_storage_key("profile", username)
         
         # چک کن قبلاً ذخیره شده؟
-        existing = get_from_index(storage_key)
+        existing = await get_from_index(storage_key)
         if existing:
             logger.info(f"📦 پروفایل {username} قبلاً در کانال ذخیره شده (msg_id: {existing['message_id']})")
             return existing["message_id"]
@@ -102,7 +123,7 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
             )
         
         if msg:
-            save_to_index(storage_key, msg.message_id, "profile", {
+            await save_to_index(storage_key, msg.message_id, "profile", {
                 "username": username,
                 "full_name": profile_data.get("full_name", "")
             })
@@ -139,7 +160,7 @@ async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username:
         return cached.get("data")
     
     # چک ایندکس
-    index_data = get_from_index(storage_key)
+    index_data = await get_from_index(storage_key)
     if not index_data:
         logger.info(f"🔍 پروفایل {username} در ایندکس یافت نشد")
         return None
@@ -159,7 +180,7 @@ async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username:
         # استخراج دیتا از کپشن
         caption = msg.caption or msg.text or ""
         
-        # ساخت دیکشنری پروفایل از روی کپشن (برای برگردوندن به فرمت اصلی)
+        # ساخت دیکشنری پروفایل از روی کپشن
         profile_data = {
             "username": username,
             "full_name": username,
@@ -182,7 +203,8 @@ async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username:
                 profile_data["biography"] = line.replace("📝", "").strip()
             elif "❤️" in line:
                 try:
-                    profile_data["followers"] = int(line.split("❤️")[1].split("دنبال‌کننده")[0].strip().replace(",", ""))
+                    parts = line.split("❤️")[1].split("دنبال‌کننده")[0].strip().replace(",", "")
+                    profile_data["followers"] = int(parts) if parts.isdigit() else 0
                 except:
                     pass
             elif "🔒" in line:
@@ -215,26 +237,23 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
         return None
     
     try:
-        # ✅ تغییر مهم: اگه media_key خودش شامل شناسه یکتاست، مستقیم استفاده کن
+        # استخراج شناسه یکتا اگر امکانش هست
         from extract_instagram_id import extract_instagram_id
         
         extracted = extract_instagram_id(media_key)
         if extracted:
-            # این یه لینک اینستاگرامه، کلید پایدار بساز
             storage_key = f"media:{extracted['full_id']}"
             logger.info(f"🔑 استفاده از کلید پایدار: {storage_key}")
         elif ":" in media_key and not media_key.startswith("media:"):
-            # احتمالاً از قبل کلید استاندارد هست
             storage_key = f"media:{media_key}"
             logger.info(f"🔑 استفاده از کلید استاندارد: {storage_key}")
         else:
-            # fallback به هش
             key_hash = _generate_key_hash(media_key)
             storage_key = generate_storage_key("media", key_hash)
             logger.info(f"🔑 استفاده از کلید هش شده: {storage_key}")
         
         # چک کن قبلاً ذخیره شده؟
-        existing = get_from_index(storage_key)
+        existing = await get_from_index(storage_key)
         if existing:
             logger.info(f"📦 مدیا {storage_key} قبلاً ذخیره شده")
             return existing["message_id"]
@@ -252,6 +271,7 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
             if not item_url:
                 continue
             
+            # ساخت کپشن برای پیام ذخیره شده
             item_caption = f"""📦 محتوای ذخیره شده
 ━━━━━━━━━━━━━━━━
 🔑 کلید: {storage_key}
@@ -295,7 +315,7 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
                     logger.error(f"خطا در ارسال داکیومنت: {e2}")
         
         if message_ids:
-            save_to_index(storage_key, message_ids[0], "media", {
+            await save_to_index(storage_key, message_ids[0], "media", {
                 "original_key": media_key,
                 "item_count": len(message_ids),
                 "message_ids": message_ids
@@ -322,13 +342,13 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
     if not DATABASE_CHANNEL_ID:
         return None
     
-    # ✅ ساخت کلید یکسان با روش ذخیره
+    # ساخت کلید یکسان با روش ذخیره
     from extract_instagram_id import extract_instagram_id
     
     extracted = extract_instagram_id(media_key)
     if extracted:
         storage_key = f"media:{extracted['full_id']}"
-        display_key = extracted['id']  # برای لاگ
+        display_key = extracted['id']
     elif ":" in media_key and not media_key.startswith("media:"):
         storage_key = f"media:{media_key}"
         display_key = media_key
@@ -346,7 +366,7 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
         return cached.get("data")
     
     # چک ایندکس
-    index_data = get_from_index(storage_key)
+    index_data = await get_from_index(storage_key)
     if not index_data:
         logger.info(f"🔍 مدیا {display_key} در ایندکس یافت نشد")
         return None
@@ -365,7 +385,7 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
     items = []
     caption = ""
     
-    for msg_id in message_ids[:10]:  # حداکثر 10 تا
+    for msg_id in message_ids[:10]:
         try:
             msg = await context.bot.forward_message(
                 chat_id=DATABASE_CHANNEL_ID,
@@ -409,7 +429,7 @@ async def save_reels_list_to_channel(context: ContextTypes.DEFAULT_TYPE, usernam
     try:
         storage_key = generate_storage_key("reels", username)
         
-        existing = get_from_index(storage_key)
+        existing = await get_from_index(storage_key)
         if existing:
             return existing["message_id"]
         
@@ -441,7 +461,7 @@ async def save_reels_list_to_channel(context: ContextTypes.DEFAULT_TYPE, usernam
         )
         
         if msg:
-            save_to_index(storage_key, msg.message_id, "reels", {
+            await save_to_index(storage_key, msg.message_id, "reels", {
                 "username": username,
                 "reels_count": len(items)
             })
@@ -483,7 +503,7 @@ async def save_highlights_list_to_channel(context: ContextTypes.DEFAULT_TYPE, us
     try:
         storage_key = generate_storage_key("highlights", username)
         
-        existing = get_from_index(storage_key)
+        existing = await get_from_index(storage_key)
         if existing:
             return existing["message_id"]
         
@@ -514,7 +534,7 @@ async def save_highlights_list_to_channel(context: ContextTypes.DEFAULT_TYPE, us
         )
         
         if msg:
-            save_to_index(storage_key, msg.message_id, "highlights", {
+            await save_to_index(storage_key, msg.message_id, "highlights", {
                 "username": username,
                 "highlights_count": len(highlights)
             })
@@ -535,7 +555,107 @@ async def get_highlights_list_from_channel(context: ContextTypes.DEFAULT_TYPE, u
     cached = _get_memory_cache(cache_key)
     if cached:
         return cached.get("data")
+    
+    # سعی کن از ایندکس هم پیدا کنی
+    storage_key = generate_storage_key("highlights", username)
+    index_data = await get_from_index(storage_key)
+    if index_data:
+        metadata = index_data.get("metadata", {})
+        return metadata.get("highlights", [])
+    
     return None
+
+
+# ========== ذخیره و بازیابی تنظیمات کاربر ==========
+
+async def save_user_setting_to_channel(context: ContextTypes.DEFAULT_TYPE, user_id: int, mode: str) -> Optional[int]:
+    """ذخیره تنظیمات کاربر در کانال"""
+    
+    if not DATABASE_CHANNEL_ID:
+        return None
+    
+    try:
+        storage_key = generate_storage_key("user_setting", str(user_id))
+        
+        mode_text = "🎬 آلبوم ترکیبی" if mode == "album" else "📁 فایل جداگانه"
+        
+        message_text = f"""⚙️ <b>تنظیمات کاربر</b>
+━━━━━━━━━━━━━━━━
+👤 کاربر: {user_id}
+🎯 حالت: {mode}
+📝 توضیح: {mode_text}
+
+🔑 کلید: {storage_key}
+💾 ذخیره: {time.strftime('%Y/%m/%d %H:%M:%S')}"""
+        
+        # حذف پیام قبلی
+        existing = await get_from_index(storage_key)
+        if existing:
+            try:
+                await context.bot.delete_message(
+                    chat_id=DATABASE_CHANNEL_ID,
+                    message_id=existing["message_id"]
+                )
+            except:
+                pass
+        
+        msg = await context.bot.send_message(
+            chat_id=DATABASE_CHANNEL_ID,
+            text=message_text,
+            parse_mode='HTML'
+        )
+        
+        if msg:
+            await save_to_index(storage_key, msg.message_id, "user_setting", {
+                "user_id": user_id,
+                "mode": mode
+            })
+            
+            logger.info(f"✅ تنظیمات کاربر {user_id} ذخیره شد (mode: {mode})")
+            return msg.message_id
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"❌ خطا در ذخیره تنظیمات کاربر: {e}")
+        return None
+
+
+async def get_user_setting_from_channel(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> Optional[str]:
+    """بازیابی تنظیمات کاربر از کانال"""
+    
+    if not DATABASE_CHANNEL_ID:
+        return None
+    
+    storage_key = generate_storage_key("user_setting", str(user_id))
+    
+    index_data = await get_from_index(storage_key)
+    if not index_data:
+        return None
+    
+    message_id = index_data.get("message_id")
+    if not message_id:
+        return None
+    
+    try:
+        msg = await context.bot.forward_message(
+            chat_id=DATABASE_CHANNEL_ID,
+            from_chat_id=DATABASE_CHANNEL_ID,
+            message_id=message_id
+        )
+        
+        text = msg.caption or msg.text or ""
+        
+        if "حالت: album" in text or "mode: album" in text:
+            return "album"
+        elif "حالت: file" in text or "mode: file" in text:
+            return "file"
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"❌ خطا در بازیابی تنظیمات کاربر: {e}")
+        return None
 
 
 # ========== توابع کمکی ==========
@@ -543,7 +663,7 @@ async def get_highlights_list_from_channel(context: ContextTypes.DEFAULT_TYPE, u
 async def delete_from_channel(context: ContextTypes.DEFAULT_TYPE, storage_key: str) -> bool:
     """حذف یک محتوا از کانال و ایندکس"""
     
-    index_data = get_from_index(storage_key)
+    index_data = await get_from_index(storage_key)
     if not index_data:
         return False
     
@@ -555,7 +675,7 @@ async def delete_from_channel(context: ContextTypes.DEFAULT_TYPE, storage_key: s
                 message_id=message_id
             )
         
-        delete_from_index(storage_key)
+        await delete_from_index(storage_key)
         logger.info(f"🗑️ حذف شد: {storage_key}")
         return True
         
@@ -569,3 +689,9 @@ def clear_memory_cache():
     global _memory_cache
     _memory_cache.clear()
     logger.info("🧹 کش حافظه پاک شد")
+
+
+async def get_index_stats() -> Dict:
+    """دریافت آمار ایندکس"""
+    from index_manager import get_index_stats as get_stats
+    return await get_stats()
