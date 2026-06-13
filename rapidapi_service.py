@@ -209,11 +209,11 @@ async def get_instagram_media(post_url: str, context=None, user_chat_id: int = N
     
     # اولویت ۱: ارسال مستقیم از کش کانال
     if user_chat_id and context:
-        success = await get_file_from_channel(context, media_key, user_chat_id)
+        success = await send_cached_media(context, user_chat_id, post_url, "reel")
         if success:
             return {"from_cache": True, "items": []}
     
-    # اولویت ۲: Redis
+    # اولویت ۲: کش Redis
     cached = await get_cached_media_smart(media_key)
     if cached:
         return cached
@@ -229,56 +229,68 @@ async def get_instagram_media(post_url: str, context=None, user_chat_id: int = N
     
     try:
         async with aiohttp.ClientSession() as session:
-            url = f"https://{RAPIDAPI_HOST}/api/instagram/media"
-            async with session.post(url, json={"url": post_url}, headers=headers, timeout=30) as resp:
+            # ✅ اندپوینت درست
+            api_url = f"https://{RAPIDAPI_HOST}/api/instagram/links"
+            
+            async with session.post(api_url, json={"url": post_url}, headers=headers, timeout=30) as resp:
                 data = await resp.json()
                 
-                # پردازش نتیجه API (بسته به ساختار RapidAPI)
-                result = data.get("result") or data
+                logger.info(f"📦 پاسخ API دریافت شد: {str(data)[:200]}...")
                 
-                items = []
-                if isinstance(result, dict) and "items" in result:
-                    items = result["items"]
-                elif isinstance(result, list):
-                    items = result
-                
-                if not items:
-                    return None
-                
-                processed_items = []
-                for item in items:
-                    item_type = "video" if item.get("is_video") or item.get("type") == "video" else "photo"
-                    media_url = item.get("video_url") or item.get("url")
-                    
-                    if media_url:
-                        processed_items.append({
-                            "type": item_type,
-                            "url": media_url,
-                            "caption": format_caption(item.get("caption", ""))
-                        })
+                # پردازش پاسخ (طبق ساختار واقعی API شما)
+                if isinstance(data, list) and len(data) > 0:
+                    items = []
+                    for item in data:
+                        urls = item.get("urls", [])
+                        if not urls:
+                            continue
                         
-                        # **ذخیره فایل واقعی در کانال**
-                        if context:
-                            await save_file_to_channel(
-                                context=context,
-                                instagram_url=post_url,
-                                direct_download_url=media_url,
-                                media_type=item_type,
-                                caption=format_caption(item.get("caption", ""))
-                            )
+                        # گرفتن بهترین کیفیت
+                        best = max(urls, key=lambda x: x.get("quality", 0))
+                        extension = urls[0].get("extension", "").lower()
+                        
+                        if extension == "mp4":
+                            item_type = "video"
+                        else:
+                            item_type = "photo"
+                        
+                        media_url = best.get("url")
+                        
+                        if media_url and media_url.startswith(('http://', 'https://')):
+                            items.append({
+                                "type": item_type,
+                                "url": media_url,
+                                "caption": format_caption(item.get("meta", {}).get("title", ""))
+                            })
+                            
+                            # ذخیره فایل در کانال (اگر context داریم)
+                            if context and media_url:
+                                logger.info(f"💾 در حال ذخیره در کانال: {post_url[:50]}...")
+                                await save_file_to_channel(
+                                    context=context,
+                                    instagram_url=post_url,
+                                    direct_download_url=media_url,
+                                    media_type=item_type,
+                                    caption=format_caption(item.get("meta", {}).get("title", ""))[:100]
+                                )
+                    
+                    final_result = {
+                        "items": items,
+                        "caption": format_caption(data[0].get("meta", {}).get("title", "")) if items else ""
+                    }
+                    
+                    if items:
+                        await set_cached_media_smart(media_key, final_result)
+                    
+                    return final_result
                 
-                final_result = {
-                    "items": processed_items,
-                    "caption": format_caption(result.get("caption", ""))
-                }
-                
-                await set_cached_media_smart(media_key, final_result)
-                return final_result
+                else:
+                    logger.error(f"❌ پاسخ API نامعتبر: {data}")
+                    return None
                 
     except Exception as e:
         logger.error(f"Error in get_instagram_media: {e}")
         return None
-
 
 
 # ========== توابع استوری و هایلایت ==========
