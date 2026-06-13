@@ -512,20 +512,97 @@ async def handle_direct_input(update: Update, context):
     is_insta_link = any(p in text.lower() for p in ["instagram.com/p/", "instagram.com/reel/", "instagram.com/tv/", "instagram.com/stories/"])
 
     if is_insta_link:
-        await handle_link(update, context)
+        # ========== پردازش لینک ==========
+        
+        # استخراج Media ID
+        media_id = extract_media_id_from_url(text)
+        if not media_id:
+            await message.reply_text("❌ لینک اینستاگرام معتبر نیست.")
+            return
+        
+        clean_url = f"https://www.instagram.com/p/{media_id}/"
+        
+        # تشخیص نوع مدیا
+        cache_media_type = "reel"
+        if "/stories/" in text.lower():
+            cache_media_type = "story"
+            clean_url = text
+        
+        # 1. تلاش برای ارسال از کش کانال
+        is_sent = await send_cached_media(context, chat_id, clean_url, cache_media_type)
+        if is_sent:
+            logger.info(f"✨ [CACHE HIT] فایل از آرشیو ارسال شد")
+            return
+        
+        # 2. دریافت از API
+        processing = await message.reply_text("⏳ در حال پردازش لینک اینستاگرام...")
+        
+        try:
+            # دریافت اطلاعات از API (این تابع باید لینک دانلود مستقیم رو برگردونه)
+            result = await get_instagram_media(text, context, chat_id)
+            
+            if not result or not result.get("items"):
+                await processing.edit_text("❌ خطا در دریافت اطلاعات.")
+                return
+            
+            items = result.get("items", [])
+            caption = result.get("caption", "")
+            default_mode = get_user_default_mode(user_id)
+            
+            direct_download_url = None
+            
+            # ارسال به کاربر
+            if len(items) == 1:
+                item = items[0]
+                direct_download_url = item.get("url")
+                
+                if default_mode == "file":
+                    await context.bot.send_document(chat_id, direct_download_url, caption=caption)
+                else:
+                    if item["type"] == "video":
+                        await context.bot.send_video(chat_id, direct_download_url, supports_streaming=True, caption=caption)
+                    else:
+                        await context.bot.send_photo(chat_id, direct_download_url, caption=caption)
+            else:
+                if default_mode == "album":
+                    await send_media_group(chat_id, context, items, caption)
+                else:
+                    for i, item in enumerate(items):
+                        if i == 0:
+                            direct_download_url = item.get("url")
+                        await context.bot.send_document(chat_id, item["url"], caption=caption if i == 0 else None)
+                        await asyncio.sleep(0.5)
+            
+            await processing.delete()
+            
+            # 3. ذخیره فایل در کانال برای دفعات بعد
+            if direct_download_url and direct_download_url.startswith(('http://', 'https://')):
+                logger.info(f"💾 ذخیره فایل در کانال: {clean_url[:50]}...")
+                await save_file_to_channel(
+                    context=context,
+                    instagram_url=clean_url,
+                    direct_download_url=direct_download_url,
+                    media_type=cache_media_type,
+                    caption=caption[:100]
+                )
+            else:
+                logger.warning(f"⚠️ لینک دانلود معتبر نیست: {direct_download_url}")
+            
+        except Exception as e:
+            logger.error(f"Error processing link: {e}")
+            await processing.edit_text("❌ خطایی در پردازش درخواست شما رخ داد.")
+        
         return
     
-    # بررسی یوزرنیم (با @ شروع شده)
+    # ========== پردازش یوزرنیم ==========
     if text.startswith('@'):
         username = text.lstrip('@')
-        # اعتبارسنجی یوزرنیم
         if not re.match(r"^[a-zA-Z0-9_.]+$", username):
             await message.reply_text("❌ یوزرنیم نامعتبر است.")
             return
         
         context.user_data['last_username'] = username
         
-        # دریافت پروفایل
         processing = await message.reply_text(f"🔍 در حال بررسی پروفایل {username}...")
         profile = await get_instagram_profile(username, context)
         
@@ -535,7 +612,7 @@ async def handle_direct_input(update: Update, context):
         
         await processing.delete()
         
-        # منوی انتخاب (پروفایل، ریلز، هایلایت، استوری)
+        # منوی انتخاب
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("👤 پروفایل", callback_data=f"quick_profile_{username}"),
