@@ -20,7 +20,7 @@ from telegram.ext import (
 from config import BOT_TOKEN, ADMIN_ID
 from database import redis_client
 from smart_cache import (
-    get_file_from_channel, save_file_to_channel,
+    save_file_to_channel,
     get_cached_media_smart, set_cached_media_smart,
     generate_media_key, get_channel_for_media,
     send_cached_media
