@@ -103,6 +103,8 @@ async def start(update: Update, context):
 
 # ========== توابع اصلی ==========
 
+# در bot.py، تابع profile_command رو پیدا کن و قسمت caption رو به این شکل تغییر بده:
+
 async def profile_command(update: Update, context, username=None):
     """دریافت پروفایل با دکمه بازگشت"""
     if username is None:
@@ -124,16 +126,11 @@ async def profile_command(update: Update, context, username=None):
             await processing.edit_text("❌ نتونستم پروفایل رو پیدا کنم.")
             return
 
-        private_text = "🔒 خصوصی" if profile.get('is_private') else "🌐 عمومی"
-        verified_text = "✅ تأیید شده" if profile.get('is_verified') else ""
-        
+        # نسخه ساده شده پروفایل - بدون فالوور، فالووینگ، وضعیت خصوصی/تأیید
         caption = (
             f"👤 <b>{profile.get('full_name', username)}</b>\n"
-            f"🔖 @{profile.get('username', username)}\n"
-            f"{private_text} {verified_text}\n\n"
+            f"🔖 @{profile.get('username', username)}\n\n"
             f"📝 {profile.get('biography', 'بدون بیو')[:280]}\n\n"
-            f"❤️ {profile.get('followers', 0):,} دنبال‌کننده\n"
-            f"👥 {profile.get('following', 0):,} دنبال‌شونده\n"
             f"📸 {profile.get('posts', 0):,} پست\n"
         )
         
@@ -156,7 +153,6 @@ async def profile_command(update: Update, context, username=None):
     except Exception as e:
         logger.error(f"Error in profile_command: {e}")
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
-
 
 async def reels_command(update: Update, context, username=None):
     """دریافت ریل‌ها با دکمه بازگشت"""
