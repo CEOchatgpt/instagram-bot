@@ -34,12 +34,20 @@ def get_channel_for_media(media_type: str) -> str:
 
 async def save_file_to_channel(context, instagram_url: str, direct_download_url: str, media_type: str, caption: str = ""):
     """ذخیره فایل در کانال - واسط برای channel_cache"""
+    
+    # لاگ برای دیباگ
+    logger.info(f"📥 save_file_to_channel فراخوانی شد:")
+    logger.info(f"   instagram_url: {instagram_url[:80]}...")
+    logger.info(f"   direct_download_url: {direct_download_url[:100]}...")
+    logger.info(f"   media_type: {media_type}")
+    
     if not direct_download_url:
-        logger.error(f"❌ save_file_to_channel: لینک دانلود وجود ندارد برای {instagram_url[:50]}")
+        logger.error(f"❌ save_file_to_channel: لینک دانلود وجود ندارد!")
         return None
     
-    logger.info(f"💾 ذخیره فایل در کانال: {instagram_url[:50]}... (نوع: {media_type})")
-    logger.info(f"🔗 لینک دانلود: {direct_download_url[:100]}...")
+    if not direct_download_url.startswith(('http://', 'https://')):
+        logger.error(f"❌ save_file_to_channel: لینک دانلود نامعتبر: {direct_download_url[:100]}")
+        return None
     
     return await channel_save_file(
         context=context,
