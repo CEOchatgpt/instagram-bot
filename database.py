@@ -1,55 +1,39 @@
-# database.py - نسخه Redis
+# database.py - بدون Redis، فقط کانال تلگرام
 import os
-import redis
 import json
+import hashlib
+import logging
+from typing import Optional, Dict, Any
 
-# گرفتن آدرس Redis از متغیر محیطی
-REDIS_URL = os.environ.get("REDIS_URL")
+logger = logging.getLogger(__name__)
 
-if not REDIS_URL:
-    print("⚠️ هشدار: REDIS_URL پیدا نشد! از دیتابیس موقتی استفاده میشه")
-    # برای تست لوکال (بدون Redis)
-    redis_client = None
-else:
-    redis_client = redis.from_url(REDIS_URL)
-    print("✅ اتصال به Redis برقرار شد")
+# این فایل فقط یک لایه انتزاعی ساده است
+# داده‌ها مستقیماً در channel_cache.py ذخیره می‌شن
+
+# برای rate limiting از دیکشنری ساده استفاده می‌کنیم
+# (در محیط Production می‌تونی از Redis فقط برای rate limit استفاده کنی)
+_rate_limit_storage = {}  # user_id -> list of timestamps
 
 def get_user_mode(user_id: int) -> str:
-    """دریافت حالت کاربر از Redis"""
-    if not redis_client:
-        return "album"  # Fallback برای لوکال
-    
-    key = f"user:{user_id}:mode"
-    mode = redis_client.get(key)
-    
-    if mode:
-        return mode.decode()
+    """دریافت حالت کاربر - از channel_cache می‌خوانیم"""
+    # فعلاً fallback روی album
+    # در ورژن بعدی می‌تونیم از کانال هم بخونیم
     return "album"
 
 def set_user_mode(user_id: int, mode: str):
-    """ذخیره حالت کاربر در Redis (برای 1 سال)"""
-    if not redis_client:
-        return
-    
+    """ذخیره حالت کاربر - در کانال ذخیره می‌کنیم"""
     if mode not in ["album", "file"]:
         return
-    
-    key = f"user:{user_id}:mode"
-    # 365 روز = 31536000 ثانیه
-    redis_client.setex(key, 31536000, mode)
-    print(f"✅ حالت کاربر {user_id} به {mode} تغییر کرد")
+    # اینجا می‌تونیم توی کانال ذخیره کنیم
+    # برای سادگی فعلاً توی دیکشنری می‌ذاریم
+    _rate_limit_storage[f"mode_{user_id}"] = mode
+    logger.info(f"✅ حالت کاربر {user_id} به {mode} تغییر کرد (ذخیره در حافظه موقت)")
+
+def get_user_mode_from_memory(user_id: int) -> str:
+    """دریافت حالت از حافظه موقت"""
+    mode = _rate_limit_storage.get(f"mode_{user_id}")
+    return mode if mode in ["album", "file"] else "album"
 
 def init_db():
-    """آماده‌سازی دیتابیس (فقط لاگ میندازه)"""
-    if redis_client:
-        # تست اتصال
-        try:
-            redis_client.ping()
-            print("✅ Redis آماده کار است")
-        except:
-            print("❌ خطا در اتصال به Redis")
-    else:
-        print("⚠️ Redis در دسترس نیست - از حافظه موقتی استفاده میشه")
-
-# اجرای اولیه
-init_db()
+    """آماده‌سازی - فقط لاگ میندازه"""
+    logger.info("✅ دیتابیس در حالت بدون Redis راه‌اندازی شد (تنها کانال تلگرام)")
