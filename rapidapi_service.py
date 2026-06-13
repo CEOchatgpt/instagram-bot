@@ -71,6 +71,19 @@ def format_caption(raw) -> str:
     
     return text
 
+def extract_media_id_from_url(post_url: str) -> str:
+    """استخراج Media ID از لینک اینستاگرام"""
+    patterns = [
+        r'instagram\.com/p/([A-Za-z0-9_-]+)',
+        r'instagram\.com/reel/([A-Za-z0-9_-]+)',
+        r'instagram\.com/tv/([A-Za-z0-9_-]+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, post_url)
+        if match:
+            return match.group(1)
+    return None
+    
 
 # ========== توابع کش لایه 1 (Redis - موقت) ==========
 
