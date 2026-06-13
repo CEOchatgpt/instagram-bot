@@ -853,30 +853,39 @@ async def handle_direct_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         await message.reply_text("⚠️ تعداد درخواست‌های شما بیش از حد مجاز است. لطفا کمی صبر کنید.")
         return
 
-    # ۲. تشخیص نوع لینک ورودی
-    is_insta, url_type, clean_url = parse_instagram_url(text)
+    # ۲. تشخیص اینکه ورودی لینک اینستاگرام است یا یوزرنیم
+    # از نمونه ریجکس‌های خودت برای تشخیص لینک استفاده می‌کنیم
+    is_insta_link = any(p in text.lower() for p in ["instagram.com/p/", "instagram.com/reel/", "instagram.com/tv/", "instagram.com/stories/"])
 
-    if is_insta:
-        # ─── [مرحله جدید: بررسی دیتابیس کانال‌های تلگرام قبل از مصرف API] ───
-        # تعیین نوع مدیا برای سیستم کش هوشمند فایل
-        cache_media_type = "photo"
-        if url_type in ["video", "reel"]:
-            cache_media_type = "reel"
-        elif url_type == "story":
+    if is_insta_link:
+        # استخراج شورت‌کد یا شناسه پست با استفاده از تابع واقعی خودت در پروژه
+        media_id = extract_media_id_from_url(text)
+        if not media_id:
+            await message.reply_text("❌ لینک اینستاگرام معتبر نیست یا فرمت آن شناسایی نشد.")
+            return
+
+        # بازسازی یک لینک تمیز و بدون پارامترهای اضافی برای کلید ردیس
+        clean_url = f"https://www.instagram.com/p/{media_id}/"
+        
+        # تشخیص نوع مدیا برای سیستم کش هوشمند فایل (پیش‌فرض ریلز/پست ویدیویی)
+        cache_media_type = "reel"
+        if "/stories/" in text.lower():
             cache_media_type = "story"
+            clean_url = text # برای استوری کل لینک را نگه می‌داریم
 
+        # ─── [مرحله اول: بررسی دیتابیس کانال‌های تلگرام قبل از مصرف API] ───
         # بررسی اینکه آیا خود این فایل قبلاً در کانال‌ها ذخیره شده یا نه
         is_sent = await send_cached_media(context, chat_id=chat_id, instagram_url=clean_url, media_type=cache_media_type)
         if is_sent:
             logger.info(f"✨ [CACHE HIT] فایل برای کاربر {chat_id} از آرشیو کانال‌ها ارسال شد.")
             return # کار تمام است؛ بدون مصرف کردن حتی ۱ واحد از API فایل تحویل داده شد!
         
-        # ─── [اگر در کش نبود: ادامه روال طبیعی ربات و مصرف API] ───
+        # ─── [مرحله دوم: اگر در کش نبود -> ادامه روال طبیعی ربات و مصرف API] ───
         processing = await message.reply_text("⏳ در حال پردازش لینک اینستاگرام...")
         
         try:
-            # دریافت اطلاعات از API اینستاگرام
-            media_data = await get_instagram_media(clean_url, context)
+            # دریافت اطلاعات از API اینستاگرام (با پاس دادن ۳ پارامتر واقعی تابع شما)
+            media_data = await get_instagram_media(text, context, chat_id)
             if not media_data:
                 await processing.edit_text("❌ خطا در دریافت اطلاعات. مطمئن شوید پیج عمومی است و لینک معتبر است.")
                 return
@@ -907,7 +916,6 @@ async def handle_direct_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 else:
                     media_group = []
                     for item in media_data:
-                        # برای آلبوم‌ها اولین لینک دانلود مستقیم رو به عنوان نمونه کش می‌کنیم
                         if not direct_download_url:
                             direct_download_url = item.get("url")
                         if item.get("type") == "video":
@@ -921,7 +929,7 @@ async def handle_direct_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             await context.bot.delete_message(chat_id=chat_id, message_id=processing.message_id)
 
-            # ─── [مرحله جدید: ذخیره خودِ فایل در کانال‌های ۵گانه برای کاربرهای بعدی] ───
+            # ─── [مرحله سوم: ذخیره خودِ فایل در کانال‌های ۵گانه برای کاربرهای بعدی] ───
             if direct_download_url:
                 await save_file_to_channel(
                     context=context,
@@ -950,8 +958,10 @@ async def handle_direct_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             
         await context.bot.delete_message(chat_id=chat_id, message_id=processing.message_id)
         
-        # نمایش کیبورد شیشه‌ای آپشن‌های پیج به کاربر
-        keyboard = get_profile_keyboard(username, profile)
+        # برای کیبورد هم مستقیم از تابع موجود در فایل استفاده می‌کنیم
+        from user_settings import get_user_settings_keyboard
+        keyboard = get_user_settings_keyboard(user_id) # دکمه‌های پیش‌فرض تنظیمات کاربر به عنوان منو
+        
         caption = f"👤 پیج: {profile.get('full_name', username)}\n"
         caption += f"📝 بیو: {profile.get('biography', '')}\n\n"
         caption += f"👥 فالوورز: {profile.get('followers', 0)} | 👤 فالووینگ: {profile.get('following', 0)}\n"
@@ -961,6 +971,7 @@ async def handle_direct_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.send_photo(chat_id=chat_id, photo=profile.get("profile_pic_url"), caption=caption, reply_markup=keyboard)
         else:
             await message.reply_text(caption, reply_markup=keyboard)
+
 
 async def handle_callback(update: Update, context):
     query = update.callback_query
