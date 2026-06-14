@@ -51,7 +51,12 @@ from channel_cache import (
 
 from extract_instagram_id import extract_instagram_id
 
-from index_manager import get_from_index
+from index_manager import (
+    get_from_index, 
+    set_context,      
+    set_index_channel,     
+    sync_index_from_channel 
+)
 
 
 # تنظیمات لاگ
