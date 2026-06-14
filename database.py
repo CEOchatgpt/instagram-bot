@@ -3,7 +3,7 @@
 import logging
 import time
 from typing import Optional
-from config import DATABASE_CHANNEL_ID
+from config import USER_SETTING_CHANNEL_ID
 from index_manager import save_to_index, get_from_index, generate_storage_key
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -47,7 +47,7 @@ async def get_user_mode(user_id: int, context=None) -> str:
         return cached
     
     # 2️⃣ کانال تلگرام (دائمی)
-    if context and DATABASE_CHANNEL_ID:
+    if context and USER_SETTING_CHANNEL_ID:
         try:
             storage_key = generate_storage_key("user_setting", str(user_id))
             index_data = await get_from_index(storage_key)
@@ -56,8 +56,8 @@ async def get_user_mode(user_id: int, context=None) -> str:
                 message_id = index_data.get("message_id")
                 if message_id:
                     msg = await context.bot.forward_message(
-                        chat_id=DATABASE_CHANNEL_ID,
-                        from_chat_id=DATABASE_CHANNEL_ID,
+                        chat_id=USER_SETTING_CHANNEL_ID,
+                        from_chat_id=USER_SETTING_CHANNEL_ID,
                         message_id=message_id
                     )
                     
@@ -92,7 +92,7 @@ async def set_user_mode(user_id: int, mode: str, context=None) -> bool:
     logger.info(f"💾 حالت کاربر {user_id} در کش: {mode}")
     
     # 2️⃣ ذخیره در کانال
-    if context and DATABASE_CHANNEL_ID:
+    if context and USER_SETTING_CHANNEL_ID:
         try:
             storage_key = generate_storage_key("user_setting", str(user_id))
             
@@ -113,7 +113,7 @@ async def set_user_mode(user_id: int, mode: str, context=None) -> bool:
             if existing:
                 try:
                     await context.bot.delete_message(
-                        chat_id=DATABASE_CHANNEL_ID,
+                        chat_id=USER_SETTING_CHANNEL_ID,
                         message_id=existing["message_id"]
                     )
                 except:
@@ -121,7 +121,7 @@ async def set_user_mode(user_id: int, mode: str, context=None) -> bool:
             
             # ارسال پیام جدید
             msg = await context.bot.send_message(
-                chat_id=DATABASE_CHANNEL_ID,
+                chat_id=USER_SETTING_CHANNEL_ID,
                 text=message_text,
                 parse_mode='HTML'
             )
