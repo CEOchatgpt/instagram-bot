@@ -58,14 +58,10 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
             logger.info(f"📦 پروفایل {username} قبلاً ذخیره شده")
             return existing["message_id"]
         
-        # کپشن ساده فقط با اسم و یوزرنیم
-        message_text = f"""👤 <b>پروفایل ذخیره شده</b>
-━━━━━━━━━━━━━━━━
-🔖 @{profile_data.get('username', username)}
-👤 {profile_data.get('full_name', username)}
-━━━━━━━━━━━━━━━━
-🔑 کلید: {storage_key}
-💾 ذخیره: {time.strftime('%Y/%m/%d %H:%M:%S')}"""
+        full_name = profile_data.get('full_name', username)
+        
+        # کپشن با اسم کامل واقعی (نه متن ثابت)
+        message_text = f"👤 {full_name}\n🔖 @{username}"
         
         if profile_data.get("profile_pic"):
             try:
@@ -76,7 +72,7 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
             msg = await context.bot.send_message(chat_id=channel_id, text=message_text, parse_mode='HTML')
         
         if msg:
-            await save_to_index(storage_key, msg.message_id, "profile", {"username": username, "full_name": profile_data.get("full_name", "")})
+            await save_to_index(storage_key, msg.message_id, "profile", {"username": username, "full_name": full_name})
             logger.info(f"✅ پروفایل {username} ذخیره شد")
             return msg.message_id
         return None
@@ -98,20 +94,24 @@ async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username:
     try:
         msg = await context.bot.forward_message(chat_id=channel_id, from_chat_id=channel_id, message_id=index_data["message_id"])
         
-        # فقط اطلاعات ضروری
+        # استخراج از کپشن ساده
+        full_name = username
+        profile_username = username
+        
+        if msg.caption:
+            lines = msg.caption.split("\n")
+            for line in lines:
+                if line.startswith("👤"):
+                    full_name = line.replace("👤", "").strip()
+                elif line.startswith("🔖"):
+                    profile_username = line.replace("🔖", "").strip().lstrip("@")
+        
         profile_data = {
-            "username": username,
-            "full_name": username,
+            "username": profile_username,
+            "full_name": full_name,
             "profile_pic": msg.photo[-1].file_id if msg.photo else None,
             "from_channel_cache": True
         }
-        
-        # استخراج اسم از کپشن اگر امکانش هست
-        if msg.caption:
-            for line in msg.caption.split("\n"):
-                if "👤" in line:
-                    profile_data["full_name"] = line.replace("👤", "").strip()
-                    break
         
         logger.info(f"✅ پروفایل {username} از کانال بازیابی شد")
         return profile_data
