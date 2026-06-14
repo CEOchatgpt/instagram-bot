@@ -73,10 +73,12 @@ def _extract_media_id_from_key(media_key: str) -> Optional[str]:
 
 async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: str, profile_data: dict) -> Optional[int]:
     """ذخیره پروفایل به صورت readable در کانال"""
-    
+
     if not PROFILE_CHANNEL_ID:
-        logger.warning("⚠️ PROFILE_CHANNEL_ID تنظیم نشده!")
+        logger.error("❌ PROFILE_CHANNEL_ID تنظیم نشده! رسانه ذخیره نمی‌شود.")
         return None
+    
+    logger.info(f"📝 ذخیره در کانال {PROFILE_CHANNEL_ID} با کلید {media_key}")
     
     try:
         storage_key = generate_storage_key("profile", username)
@@ -332,6 +334,13 @@ async def save_media_with_key(context: ContextTypes.DEFAULT_TYPE, storage_key: s
 # ========== تابع ذخیره با نرمال‌سازی کلید (جایگزین save_media_to_channel قبلی) ==========
 
 async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: str, media_data: dict) -> Optional[int]:
+
+    if not MEDIA_CHANNEL_ID:
+        logger.error("❌ MEDIA_CHANNEL_ID تنظیم نشده! رسانه ذخیره نمی‌شود.")
+        return None
+    
+    logger.info(f"📝 ذخیره در کانال {MEDIA_CHANNEL_ID} با کلید {media_key}")
+    
     """
     ذخیره محتوای مدیا - با نرمال‌سازی کلید برای اطمینان از یکسان بودن
     """
@@ -445,6 +454,13 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
 # ========== ذخیره و بازیابی لیست ریل‌ها ==========
 
 async def save_reels_list_to_channel(context: ContextTypes.DEFAULT_TYPE, username: str, reels_data: dict) -> Optional[int]:
+
+    if not REELS_LIST_CHANNEL_ID:
+        logger.error("❌ REELS_LIST_CHANNEL_ID تنظیم نشده! رسانه ذخیره نمی‌شود.")
+        return None
+    
+    logger.info(f"📝 ذخیره در کانال {REELS_LIST_CHANNEL_ID} با کلید {media_key}")
+    
     """ذخیره لیست ریل‌ها"""
     
     if not REELS_LIST_CHANNEL_ID:
@@ -519,6 +535,13 @@ async def get_reels_list_from_channel(context: ContextTypes.DEFAULT_TYPE, userna
 # ========== ذخیره و بازیابی لیست هایلایت‌ها ==========
 
 async def save_highlights_list_to_channel(context: ContextTypes.DEFAULT_TYPE, username: str, highlights: list) -> Optional[int]:
+    
+     if not HIGHLIGHTS_LIST_CHANNEL_ID:
+        logger.error("❌ HIGHLIGHTS_LIST_CHANNEL_ID تنظیم نشده! رسانه ذخیره نمی‌شود.")
+        return None
+    
+    logger.info(f"📝 ذخیره در کانال {HIGHLIGHTS_LIST_CHANNEL_ID} با کلید {media_key}")
+    
     """ذخیره لیست هایلایت‌ها"""
     
     if not HIGHLIGHTS_LIST_CHANNEL_ID:
@@ -593,6 +616,13 @@ async def get_highlights_list_from_channel(context: ContextTypes.DEFAULT_TYPE, u
 # ========== ذخیره و بازیابی تنظیمات کاربر ==========
 
 async def save_user_setting_to_channel(context: ContextTypes.DEFAULT_TYPE, user_id: int, mode: str) -> Optional[int]:
+
+    if not USER_SETTING_CHANNEL_ID:
+        logger.error("❌ USER_SETTING_CHANNEL_ID تنظیم نشده! رسانه ذخیره نمی‌شود.")
+        return None
+    
+    logger.info(f"📝 ذخیره در کانال {USER_SETTING_CHANNEL_ID} با کلید {media_key}")
+    
     """ذخیره تنظیمات کاربر در کانال"""
     
     if not USER_SETTING_CHANNEL_ID:
