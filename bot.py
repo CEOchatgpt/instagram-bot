@@ -605,6 +605,11 @@ async def settings_command(update: Update, context):
 
 async def handle_link(update: Update, context):
     """هندلر لینک‌های اینستاگرام با پشتیبانی کامل از کش"""
+
+    # بررسی اینکه پیام وجود داره
+    if not update.message:
+        return
+    
     url = update.message.text.strip()
     user_id = update.effective_user.id
 
@@ -892,6 +897,11 @@ async def inline_query(update: Update, context):
 
 async def handle_direct_input(update: Update, context):
     """هندلر برای ورودی مستقیم توی بات"""
+
+    # بررسی اینکه پیام وجود داره یا نه
+    if not update.message:
+        return
+
     text = update.message.text.strip()
 
     # چک کردن شناسه یکتا (مثل 96TXg1muSP یا DZcDzv9iJOJ)
@@ -971,6 +981,11 @@ async def handle_direct_input(update: Update, context):
 
 async def handle_callback(update: Update, context):
     """هندلر تمام دکمه‌های شیشه‌ای"""
+
+    # بررسی اینکه callback query وجود داره
+    if not update.callback_query:
+        return
+    
     query = update.callback_query
     await query.answer()
     
