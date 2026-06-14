@@ -1138,7 +1138,6 @@ async def clear_cache_command(update: Update, context):
     _memory_cache.clear()
     
     # پاک کردن کش حافظه از channel_cache
-    from channel_cache import clear_memory_cache
     clear_memory_cache()
     
     # پاک کردن کش تنظیمات کاربر از database
@@ -1146,6 +1145,7 @@ async def clear_cache_command(update: Update, context):
     _user_cache.clear()
     
     await update.message.reply_text("✅ تمام کش‌های حافظه پاک شد.")
+
 
 
 async def stats_command(update: Update, context):
@@ -1207,20 +1207,19 @@ async def check_bot_permissions(update: Update, context):
 # ========== main ==========
 
 async def post_init(application: Application):
-    """بعد از آماده شدن اپلیکیشن اجرا می‌شود"""
-    from index_manager import set_context, set_index_channel, sync_index_from_channel
-    from config import INDEX_CHANNEL_ID
+    """
+    این تابع بعد از آماده شدن اپلیکیشن و قبل از شروع polling اجرا می‌شود
+    اینجا کارهایی که نیاز به await دارند رو انجام می‌دیم
+    """
+    logger.info("🚀 در حال آماده‌سازی ربات...")
     
-    # تنظیم context - این بار از application.bot استفاده می‌کنیم
+    # تنظیم context برای index_manager
     set_context(application.bot)
     
-    # تنظیم کانال ایندکس
+    # تنظیم کانال ایندکس (اگر تنظیم شده باشد)
     if INDEX_CHANNEL_ID:
         try:
             set_index_channel(int(INDEX_CHANNEL_ID))
-            
-            # کمی صبر می‌کنیم تا بات کاملاً آماده شود
-            await asyncio.sleep(1)
             
             # همگام‌سازی ایندکس از کانال (بعد از ریستارت)
             await sync_index_from_channel()
@@ -1228,20 +1227,25 @@ async def post_init(application: Application):
         except Exception as e:
             logger.error(f"❌ خطا در همگام‌سازی ایندکس: {e}")
     else:
-        logger.warning("⚠️ INDEX_CHANNEL_ID تنظیم نشده!")
+        logger.warning("⚠️ INDEX_CHANNEL_ID تنظیم نشده! ایندکس فقط در فایل محلی ذخیره می‌شود")
+    
+    logger.info("✅ ربات آماده اجراست!")
+
 
 def main():
-    """راه‌اندازی اصلی ربات"""
+    """راه‌اندازی اصلی ربات - این تابع sync است (نه async)"""
     
+    # مقداردهی اولیه دیتابیس
     init_db()
     
     # ساخت اپلیکیشن
     app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
     
-    # اضافه کردن post_init (بعد از آماده شدن اجرا می‌شود)
+    # ========== ثبت post_init ==========
+    # این تابع بعد از آماده شدن اپلیکیشن اجرا می‌شود
     app.post_init = post_init
     
-    # دستورات
+    # ========== دستورات ==========
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("settings", settings_command))
@@ -1252,12 +1256,14 @@ def main():
     app.add_handler(CommandHandler("clearcache", clear_cache_command))
     app.add_handler(CommandHandler("stats", stats_command))
     
-    # هندلرها
+    # ========== هندلرها ==========
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_input))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(InlineQueryHandler(inline_query))
     
     logger.info("🤖 ربات در حال اجراست...")
+    
+    # شروع polling (این تابع sync است و برنامه را در loop نگه می‌دارد)
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
