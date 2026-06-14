@@ -1,4 +1,4 @@
-# database.py - نسخه یکپارچه با پشتیبانی از کش حافظه و کانال
+# database.py - نسخه بدون کش حافظه (فقط کانال تلگرام)
 
 import logging
 import time
@@ -9,44 +9,15 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
 
-# کش حافظه برای سرعت
-_user_cache = {}  # user_id -> {"mode": mode, "expires": timestamp}
-CACHE_TTL = 3600  # 1 ساعت
-
-
-def _get_cache(user_id: int) -> Optional[str]:
-    """دریافت از کش حافظه"""
-    if user_id in _user_cache:
-        item = _user_cache[user_id]
-        if time.time() < item["expires"]:
-            return item["mode"]
-        else:
-            del _user_cache[user_id]
-    return None
-
-
-def _set_cache(user_id: int, mode: str):
-    """ذخیره در کش حافظه"""
-    _user_cache[user_id] = {
-        "mode": mode,
-        "expires": time.time() + CACHE_TTL
-    }
-
 
 async def get_user_mode(user_id: int, context=None) -> str:
     """
-    دریافت حالت کاربر از کش یا کانال
+    دریافت حالت کاربر از کانال تلگرام
     
-    اولویت: کش حافظه > کانال تلگرام > پیش‌فرض (album)
+    اولویت: کانال تلگرام > پیش‌فرض (album)
     """
     
-    # 1️⃣ کش حافظه (سریع)
-    cached = _get_cache(user_id)
-    if cached:
-        logger.debug(f"📦 حالت کاربر {user_id} از کش: {cached}")
-        return cached
-    
-    # 2️⃣ کانال تلگرام (دائمی)
+    # کانال تلگرام (دائمی)
     if context and USER_SETTING_CHANNEL_ID:
         try:
             storage_key = generate_storage_key("user_setting", str(user_id))
@@ -67,31 +38,26 @@ async def get_user_mode(user_id: int, context=None) -> str:
                     else:
                         mode = "album"
                     
-                    _set_cache(user_id, mode)
                     logger.info(f"🏦 حالت کاربر {user_id} از کانال: {mode}")
                     return mode
         except Exception as e:
             logger.warning(f"خطا در خواندن تنظیمات از کانال: {e}")
     
-    # 3️⃣ پیش‌فرض
+    # پیش‌فرض
     logger.info(f"🆕 حالت پیش‌فرض album برای کاربر {user_id}")
     return "album"
 
 
 async def set_user_mode(user_id: int, mode: str, context=None) -> bool:
     """
-    ذخیره حالت کاربر در کش و کانال
+    ذخیره حالت کاربر در کانال تلگرام
     """
     
     if mode not in ["album", "file"]:
         logger.warning(f"❌ حالت نامعتبر: {mode}")
         return False
     
-    # 1️⃣ ذخیره در کش
-    _set_cache(user_id, mode)
-    logger.info(f"💾 حالت کاربر {user_id} در کش: {mode}")
-    
-    # 2️⃣ ذخیره در کانال
+    # ذخیره در کانال
     if context and USER_SETTING_CHANNEL_ID:
         try:
             storage_key = generate_storage_key("user_setting", str(user_id))
@@ -138,26 +104,34 @@ async def set_user_mode(user_id: int, mode: str, context=None) -> bool:
             logger.error(f"❌ خطا در ذخیره در کانال: {e}")
             return False
     
-    return True
+    return False
 
 
 def get_user_settings_keyboard(user_id: int):
-    """دریافت کیبورد تنظیمات (برای استفاده در bot.py)"""
-    
-    # اینجا باید از get_user_mode استفاده کنی ولی نمی‌تونی async باشه
-    # برای حل این مشکل، mode رو از کش میخونیم یا از پارامتر میگیریم
-    
-    # به صورت همزمان (synchronous) از کش میخونیم
-    mode = _get_cache(user_id)
-    if not mode:
-        mode = "album"  # پیش‌فرض موقت
-    
+    """
+    دریافت کیبورد تنظیمات
+    توجه: این تابع sync است و mode رو از حافظه نمی‌خونه
+    برای نمایش حالت فعلی، باید از طریق کش در bot.py مدیریت بشه
+    """
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎬 آلبوم ترکیبی", callback_data="set_mode_album")],
+        [InlineKeyboardButton("📁 فایل جداگانه", callback_data="set_mode_file")],
+        [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="back_to_main")]
+    ])
+    return keyboard
+
+
+def get_user_settings_keyboard_with_mode(mode: str):
+    """
+    دریافت کیبورد تنظیمات با نمایش حالت فعال
+    mode: 'album' یا 'file'
+    """
     if mode == "album":
         album_text = "✅ آلبوم ترکیبی (فعال)"
-        file_text = "📁 فایل"
+        file_text = "📁 فایل جداگانه"
     else:
         album_text = "🎬 آلبوم ترکیبی"
-        file_text = "✅ فایل (فعال)"
+        file_text = "✅ فایل جداگانه (فعال)"
     
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(album_text, callback_data="set_mode_album")],
@@ -165,14 +139,6 @@ def get_user_settings_keyboard(user_id: int):
         [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="back_to_main")]
     ])
     return keyboard
-
-
-# ========== برای سازگاری با کد قدیمی ==========
-
-def get_user_mode_from_memory(user_id: int) -> str:
-    """فقط برای سازگاری - از کش میخونه"""
-    cached = _get_cache(user_id)
-    return cached if cached in ["album", "file"] else "album"
 
 
 def init_db():
