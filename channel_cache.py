@@ -58,20 +58,11 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
             logger.info(f"📦 پروفایل {username} قبلاً ذخیره شده")
             return existing["message_id"]
         
-        private_text = "🔒 خصوصی" if profile_data.get('is_private') else "🌐 عمومی"
-        verified_text = "✅ تأیید شده" if profile_data.get('is_verified') else ""
-        
+        # کپشن ساده فقط با اسم و یوزرنیم
         message_text = f"""👤 <b>پروفایل ذخیره شده</b>
 ━━━━━━━━━━━━━━━━
 🔖 @{profile_data.get('username', username)}
-📝 {profile_data.get('biography', 'بدون بیو')[:200]}
-
-📊 آمار:
-❤️ {profile_data.get('followers', 0):,} دنبال‌کننده
-👥 {profile_data.get('following', 0):,} دنبال‌شونده
-📸 {profile_data.get('posts', 0):,} پست
-
-{private_text} {verified_text}
+👤 {profile_data.get('full_name', username)}
 ━━━━━━━━━━━━━━━━
 🔑 کلید: {storage_key}
 💾 ذخیره: {time.strftime('%Y/%m/%d %H:%M:%S')}"""
@@ -107,24 +98,26 @@ async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username:
     try:
         msg = await context.bot.forward_message(chat_id=channel_id, from_chat_id=channel_id, message_id=index_data["message_id"])
         
+        # فقط اطلاعات ضروری
         profile_data = {
             "username": username,
             "full_name": username,
-            "biography": "",
-            "followers": 0,
-            "following": 0,
-            "posts": 0,
             "profile_pic": msg.photo[-1].file_id if msg.photo else None,
-            "is_private": False,
-            "is_verified": False,
             "from_channel_cache": True
         }
+        
+        # استخراج اسم از کپشن اگر امکانش هست
+        if msg.caption:
+            for line in msg.caption.split("\n"):
+                if "👤" in line:
+                    profile_data["full_name"] = line.replace("👤", "").strip()
+                    break
+        
         logger.info(f"✅ پروفایل {username} از کانال بازیابی شد")
         return profile_data
     except Exception as e:
         logger.error(f"❌ خطا در بازیابی پروفایل: {e}")
         return None
-
 
 # ========== ذخیره مدیا ==========
 
