@@ -163,38 +163,55 @@ async def get_instagram_profile(username: str, context=None):
 
 # ========== مدیا (پست، ریلز، استوری، هایلایت) ==========
 
+# rapidapi_service.py - تابع get_instagram_media کامل
+
 async def get_instagram_media(post_url: str, context=None) -> dict | None:
     """دریافت محتوای پست - کش دو لایه (حافظه + کانال تلگرام)"""
     
     if not post_url or "instagram.com" not in post_url:
         return None
     
-    # استخراج شناسه یکتا
+    # نرمال‌سازی URL برای ایجاد کلید یکسان
+    from extract_instagram_id import normalize_url, extract_instagram_id
+    
+    normalized_key = normalize_url(post_url)
     extracted = extract_instagram_id(post_url)
+    
+    # ساخت کلید یکسان برای ذخیره و بازیابی
     if extracted:
         cache_key = f"media:{extracted['full_id']}"
+        logger.info(f"🔑 کلید یکتا برای {post_url[:50]}: {cache_key}")
     else:
-        cache_key = f"media:{hashlib.md5(post_url.encode()).hexdigest()}"
+        # fallback: هش کردن URL
+        cache_key = f"media:{hashlib.md5(normalized_key.encode()).hexdigest()}"
+        logger.info(f"🔑 کلید هش شده برای {post_url[:50]}: {cache_key[:30]}...")
     
     # لایه 1: کش حافظه
     cached = _get_memory_cache(cache_key)
     if cached:
-        logger.info(f"📦 مدیا {post_url[:50]}... از حافظه کش برگردانده شد")
+        logger.info(f"📦 مدیا {cache_key} از حافظه کش برگردانده شد")
         return cached
     
-    # لایه 2: کش کانال تلگرام
+    # لایه 2: کش کانال تلگرام (با کلید یکسان)
     if context:
         try:
-            channel_cached = await get_media_from_channel(context, post_url)
-            if channel_cached:
-                logger.info(f"🏦 مدیا {post_url[:50]}... از کانال دیتابیس برگردانده شد")
-                _set_memory_cache(cache_key, channel_cached, ttl=7200)
-                return channel_cached
+            from index_manager import get_from_index
+            index_data = await get_from_index(cache_key)
+            
+            if index_data:
+                logger.info(f"🏦 مدیا در ایندکس پیدا شد: {cache_key}")
+                
+                from channel_cache import get_media_by_key
+                channel_cached = await get_media_by_key(context, cache_key)
+                if channel_cached:
+                    logger.info(f"🏦 مدیا از کانال دیتابیس برگردانده شد: {cache_key}")
+                    _set_memory_cache(cache_key, channel_cached, ttl=7200)
+                    return channel_cached
         except Exception as e:
             logger.warning(f"خطا در خواندن مدیا از کانال: {e}")
     
     # لایه 3: API
-    logger.info(f"🌐 مدیا {post_url[:50]}... در کش نبود - ارسال درخواست به API")
+    logger.info(f"🌐 مدیا در کش نبود - ارسال درخواست به API: {post_url[:50]}...")
     
     # تشخیص استوری
     story_match = re.search(r'instagram\.com/stories/([^/]+)/?(\d+)?', post_url)
@@ -203,7 +220,8 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
         if result and result.get("items"):
             _set_memory_cache(cache_key, result, ttl=7200)
             if context:
-                await save_media_to_channel(context, post_url, result)
+                from channel_cache import save_media_with_key
+                await save_media_with_key(context, cache_key, result, post_url)
         return result
     
     # تشخیص هایلایت
@@ -256,14 +274,14 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     
     result = {"caption": caption, "items": items} if items else None
     
-    # ذخیره در هر دو لایه
+    # ذخیره در هر دو لایه با کلید یکسان
     if result:
         _set_memory_cache(cache_key, result, ttl=7200)
         if context:
-            await save_media_to_channel(context, post_url, result)
+            from channel_cache import save_media_with_key
+            await save_media_with_key(context, cache_key, result, post_url)
     
     return result
-
 
 # ========== استوری ==========
 
