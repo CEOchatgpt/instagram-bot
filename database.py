@@ -126,7 +126,7 @@ async def set_user_mode(user_id: int, mode: str, context=None) -> bool:
                 parse_mode='HTML'
             )
             
-            save_to_index(storage_key, msg.message_id, "user_setting", {
+            await save_to_index(storage_key, msg.message_id, "user_setting", {
                 "user_id": user_id,
                 "mode": mode
             })
