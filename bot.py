@@ -605,11 +605,6 @@ async def settings_command(update: Update, context):
 
 async def handle_link(update: Update, context):
     """هندلر لینک‌های اینستاگرام با پشتیبانی کامل از کش"""
-
-    # بررسی اینکه پیام وجود داره
-    if not update.message:
-        return
-    
     url = update.message.text.strip()
     user_id = update.effective_user.id
 
@@ -897,11 +892,6 @@ async def inline_query(update: Update, context):
 
 async def handle_direct_input(update: Update, context):
     """هندلر برای ورودی مستقیم توی بات"""
-
-    # بررسی اینکه پیام وجود داره یا نه
-    if not update.message:
-        return
-
     text = update.message.text.strip()
 
     # چک کردن شناسه یکتا (مثل 96TXg1muSP یا DZcDzv9iJOJ)
@@ -981,11 +971,6 @@ async def handle_direct_input(update: Update, context):
 
 async def handle_callback(update: Update, context):
     """هندلر تمام دکمه‌های شیشه‌ای"""
-
-    # بررسی اینکه callback query وجود داره
-    if not update.callback_query:
-        return
-    
     query = update.callback_query
     await query.answer()
     
@@ -1223,226 +1208,6 @@ async def check_bot_permissions(update: Update, context):
     
     await update.message.reply_text("\n".join(results))
 
-# bot.py - اضافه کردن دستور search
-
-async def search_command(update: Update, context):
-    """
-    دستور جستجو در ایندکس
-    استفاده: /search کلمه [نوع] [تعداد روز]
-    
-    مثال‌ها:
-    /search cristiano
-    /search leomessi post
-    /search past 7days
-    /search type:reel
-    """
-    
-    if not context.args:
-        await update.message.reply_text(
-            "🔍 <b>راهنمای جستجو</b>\n\n"
-            "📌 <b>استفاده:</b>\n"
-            "<code>/search کلمه مورد نظر</code>\n\n"
-            "📌 <b>مثال‌ها:</b>\n"
-            "<code>/search cristiano</code> - جستجوی کریستیانو\n"
-            "<code>/search leomessi post</code> - پست‌های لئومسی\n"
-            "<code>/search type:reel</code> - همه ریل‌ها\n"
-            "<code>/search recent 7</code> - محتوای ۷ روز اخیر\n\n"
-            "📌 <b>انواع محتوا:</b>\n"
-            "• post - پست‌ها\n"
-            "• reel - ریل‌ها\n"
-            "• story - استوری‌ها\n"
-            "• highlight - هایلایت‌ها\n"
-            "• profile - پروفایل‌ها",
-            parse_mode='HTML'
-        )
-        return
-    
-    # پردازش پارامترها
-    args = ' '.join(context.args).lower()
-    
-    # بررسی نوع جستجو
-    if args.startswith('type:'):
-        content_type = args.split(':')[1]
-        await search_by_type_command(update, context, content_type)
-    
-    elif args.startswith('recent'):
-        days = 7
-        if len(context.args) > 1:
-            try:
-                days = int(context.args[1])
-            except:
-                pass
-        await search_recent_command(update, context, days)
-    
-    else:
-        keyword = context.args[0]
-        content_type = None
-        if len(context.args) > 1:
-            content_type = context.args[1]
-        
-        await search_by_keyword_command(update, context, keyword, content_type)
-
-
-async def search_by_keyword_command(update: Update, context, keyword: str, content_type: str = None):
-    """جستجو با کلمه کلیدی"""
-    from index_manager import search_index
-    
-    processing = await update.message.reply_text(f"🔍 در حال جستجوی «{keyword}»...")
-    
-    results = await search_index(keyword=keyword, content_type=content_type, limit=20)
-    
-    if not results:
-        await processing.edit_text(f"❌ نتیجه‌ای برای «{keyword}» پیدا نشد.")
-        return
-    
-    # فرمت کردن نتایج
-    text = f"🔍 <b>نتایج جستجوی «{keyword}»</b>\n"
-    text += f"━━━━━━━━━━━━━━━━\n"
-    text += f"📊 <b>{len(results)} نتیجه پیدا شد</b>\n\n"
-    
-    type_emoji = {
-        'post': '📷', 'reel': '🎬', 'story': '📖', 
-        'highlight': '📚', 'profile': '👤', 'unknown': '📦'
-    }
-    
-    for i, result in enumerate(results[:15], 1):
-        emoji = type_emoji.get(result['type'], '📦')
-        timestamp = time.strftime('%Y-%m-%d %H:%M', time.localtime(result['timestamp']))
-        
-        # استخراج شناسه برای نمایش
-        display_id = result['key'].split(':')[-1][:15]
-        
-        text += f"{i}. {emoji} <b>{result['type']}</b> - `{display_id}`\n"
-        text += f"   🕐 {timestamp}\n"
-        
-        # اضافه کردن اطلاعات اضافی اگر هست
-        metadata = result.get('metadata', {})
-        if metadata.get('username'):
-            text += f"   👤 @{metadata['username']}\n"
-        elif metadata.get('original_key'):
-            original = metadata['original_key'][:40]
-            text += f"   🔗 {original}\n"
-        
-        text += "\n"
-    
-    text += f"━━━━━━━━━━━━━━━━\n"
-    text += f"💡 برای مشاهده کامل از دستور <code>/get {results[0]['key']}</code> استفاده کن"
-    
-    await processing.edit_text(text, parse_mode='HTML')
-
-
-async def search_by_type_command(update: Update, context, content_type: str):
-    """جستجو بر اساس نوع"""
-    from index_manager import search_by_type
-    
-    processing = await update.message.reply_text(f"🔍 در حال جستجوی {content_type}ها...")
-    
-    results = await search_by_type(content_type, limit=30)
-    
-    if not results:
-        await processing.edit_text(f"❌ هیچ {content_type}ای در ایندکس پیدا نشد.")
-        return
-    
-    type_name = {
-        'post': 'پست', 'reel': 'ریل', 'story': 'استوری',
-        'highlight': 'هایلایت', 'profile': 'پروفایل'
-    }.get(content_type, content_type)
-    
-    text = f"🔍 <b>لیست {type_name}های ذخیره شده</b>\n"
-    text += f"━━━━━━━━━━━━━━━━\n"
-    text += f"📊 <b>{len(results)} {type_name} پیدا شد</b>\n\n"
-    
-    for i, result in enumerate(results[:20], 1):
-        timestamp = time.strftime('%Y-%m-%d %H:%M', time.localtime(result['timestamp']))
-        display_id = result['key'].split(':')[-1][:20]
-        
-        text += f"{i}. `{display_id}`\n"
-        text += f"   🕐 {timestamp}\n"
-        
-        metadata = result.get('metadata', {})
-        if metadata.get('username'):
-            text += f"   👤 @{metadata['username']}\n"
-        
-        text += "\n"
-    
-    await processing.edit_text(text, parse_mode='HTML')
-
-
-async def search_recent_command(update: Update, context, days: int = 7):
-    """جستجوی محتواهای اخیر"""
-    from index_manager import search_recent
-    
-    processing = await update.message.reply_text(f"🔍 در حال جستجوی محتوای {days} روز اخیر...")
-    
-    results = await search_recent(days=days, limit=50)
-    
-    if not results:
-        await processing.edit_text(f"❌ هیچ محتوایی در {days} روز اخیر پیدا نشد.")
-        return
-    
-    text = f"🔍 <b>محتوای {days} روز اخیر</b>\n"
-    text += f"━━━━━━━━━━━━━━━━\n"
-    text += f"📊 <b>{len(results)} محتوا</b>\n\n"
-    
-    type_emoji = {
-        'post': '📷', 'reel': '🎬', 'story': '📖', 
-        'highlight': '📚', 'profile': '👤'
-    }
-    
-    for i, result in enumerate(results[:20], 1):
-        emoji = type_emoji.get(result['type'], '📦')
-        timestamp = time.strftime('%m-%d %H:%M', time.localtime(result['timestamp']))
-        display_id = result['key'].split(':')[-1][:15]
-        
-        text += f"{i}. {emoji} {result['type']} - `{display_id}` ({timestamp})\n"
-    
-    await processing.edit_text(text, parse_mode='HTML')
-
-
-async def get_by_key_command(update: Update, context):
-    """
-    دریافت اطلاعات یک آیتم از ایندکس با کلید
-    استفاده: /get کلید
-    """
-    if not context.args:
-        await update.message.reply_text(
-            "📌 نحوه استفاده:\n<code>/get post:DZLDbXgjNPj</code>",
-            parse_mode='HTML'
-        )
-        return
-    
-    from index_manager import get_from_index
-    
-    key = context.args[0]
-    data = await get_from_index(key)
-    
-    if not data:
-        await update.message.reply_text(f"❌ آیتم با کلید `{key}` پیدا نشد.", parse_mode='HTML')
-        return
-    
-    type_emoji = {
-        'post': '📷', 'reel': '🎬', 'story': '📖', 
-        'highlight': '📚', 'profile': '👤'
-    }
-    emoji = type_emoji.get(data.get('type'), '📦')
-    
-    text = f"{emoji} <b>اطلاعات آیتم</b>\n"
-    text += f"━━━━━━━━━━━━━━━━\n"
-    text += f"🔑 <b>کلید:</b> <code>{key}</code>\n"
-    text += f"📁 <b>نوع:</b> {data.get('type')}\n"
-    text += f"📨 <b>Message ID:</b> {data.get('message_id')}\n"
-    text += f"🕐 <b>زمان:</b> {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(data.get('timestamp', 0)))}\n\n"
-    
-    metadata = data.get('metadata', {})
-    if metadata:
-        text += f"📦 <b>متادیتا:</b>\n"
-        text += f"```json\n{json.dumps(metadata, ensure_ascii=False, indent=2)[:500]}\n```\n"
-    
-    text += f"━━━━━━━━━━━━━━━━\n"
-    text += f"💡 این آیتم در کانال ایندکس با <code>msg_id: {data.get('index_msg_id')}</code> ذخیره شده"
-    
-    await update.message.reply_text(text, parse_mode='HTML')
-
 # ========== main ==========
 
 async def post_init(application: Application):
@@ -1494,9 +1259,6 @@ def main():
     app.add_handler(CommandHandler("stories", stories_command))
     app.add_handler(CommandHandler("clearcache", clear_cache_command))
     app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("search", search_command))
-    app.add_handler(CommandHandler("get", get_by_key_command))
-
     
     # ========== هندلرها ==========
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_input))
