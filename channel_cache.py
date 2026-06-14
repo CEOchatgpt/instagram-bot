@@ -552,7 +552,7 @@ async def save_highlights_list_to_channel(context: ContextTypes.DEFAULT_TYPE, us
         message_lines.append(f"💾 {time.strftime('%Y/%m/%d %H:%M:%S')}")
         
         msg = await context.bot.send_message(
-            chat_id=HIGHLIGHT_CHANNEL_ID,
+            chat_id= HIGHLIGHTS_LIST_CHANNEL_ID,
             text="\n".join(message_lines),
             parse_mode='HTML'
         )
