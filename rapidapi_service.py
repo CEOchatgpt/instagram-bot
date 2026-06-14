@@ -1,4 +1,4 @@
-# rapidapi_service.py - بدون Redis، فقط کانال تلگرام
+# rapidapi_service.py - نسخه تصحیح شده
 
 import re
 import aiohttp
@@ -88,6 +88,20 @@ def format_caption(raw) -> str:
     return text
 
 
+def _detect_content_type(url: str) -> str:
+    """تشخیص نوع محتوا از URL"""
+    if '/reel/' in url:
+        return 'reel'
+    elif '/stories/' in url:
+        return 'story'
+    elif '/p/' in url:
+        return 'post'
+    elif 'highlights' in url:
+        return 'highlight'
+    else:
+        return 'post'
+
+
 # ========== پروفایل ==========
 
 async def get_instagram_profile(username: str, context=None):
@@ -107,7 +121,7 @@ async def get_instagram_profile(username: str, context=None):
             channel_cached = await get_profile_from_channel(context, username)
             if channel_cached:
                 logger.info(f"🏦 پروفایل {username} از کانال دیتابیس برگردانده شد")
-                _set_memory_cache(cache_key, channel_cached, ttl=3600)  # 1 ساعت کش حافظه
+                _set_memory_cache(cache_key, channel_cached, ttl=3600)
                 return channel_cached
         except Exception as e:
             logger.warning(f"خطا در خواندن از کانال دیتابیس: {e}")
@@ -149,7 +163,6 @@ async def get_instagram_profile(username: str, context=None):
                     "is_verified": user_data.get("is_verified", False),
                 }
                 
-                # ذخیره در هر دو لایه
                 _set_memory_cache(cache_key, profile, ttl=3600)
                 if context:
                     await save_profile_to_channel(context, username, profile)
@@ -163,8 +176,6 @@ async def get_instagram_profile(username: str, context=None):
 
 # ========== مدیا (پست، ریلز، استوری، هایلایت) ==========
 
-# rapidapi_service.py - تابع get_instagram_media کامل
-
 async def get_instagram_media(post_url: str, context=None) -> dict | None:
     """دریافت محتوای پست - کش دو لایه (حافظه + کانال تلگرام)"""
     
@@ -176,6 +187,7 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     
     normalized_key = normalize_url(post_url)
     extracted = extract_instagram_id(post_url)
+    content_type = _detect_content_type(post_url)
     
     # ساخت کلید یکسان برای ذخیره و بازیابی
     if extracted:
@@ -220,8 +232,8 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
         if result and result.get("items"):
             _set_memory_cache(cache_key, result, ttl=7200)
             if context:
-                from channel_cache import save_media_with_key
-                await save_media_with_key(context, cache_key, result, post_url)
+                # استفاده از save_media_to_channel به جای save_media_with_key
+                await save_media_to_channel(context, cache_key, result, 'story')
         return result
     
     # تشخیص هایلایت
@@ -278,10 +290,11 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     if result:
         _set_memory_cache(cache_key, result, ttl=7200)
         if context:
-            from channel_cache import save_media_with_key
-            await save_media_with_key(context, cache_key, result, post_url)
+            # استفاده از save_media_to_channel به جای save_media_with_key
+            await save_media_to_channel(context, cache_key, result, content_type)
     
     return result
+
 
 # ========== استوری ==========
 
@@ -337,7 +350,7 @@ async def get_instagram_story(username: str, story_id: str = None, context=None)
                 if result and result.get("items"):
                     _set_memory_cache(cache_key, result, ttl=3600)
                     if context:
-                        await save_media_to_channel(context, story_key, result)
+                        await save_media_to_channel(context, story_key, result, 'story')
                 
                 return result
                 
@@ -364,7 +377,6 @@ async def check_and_get_stories(username: str, context=None):
             channel_cached = await get_media_from_channel(context, story_key)
             if channel_cached:
                 logger.info(f"🏦 استوری‌های {username} از کانال دیتابیس برگردانده شد")
-                # اگر channel_cached دیکشنری با کلید items هست
                 if isinstance(channel_cached, dict) and "items" in channel_cached:
                     items = channel_cached["items"]
                 else:
@@ -416,7 +428,7 @@ async def check_and_get_stories(username: str, context=None):
                     
                     if context:
                         story_data = {"caption": f"📖 استوری‌های @{username}", "items": items}
-                        await save_media_to_channel(context, story_key, story_data)
+                        await save_media_to_channel(context, story_key, story_data, 'story')
                         logger.info(f"✅ استوری‌های {username} در کانال دیتابیس ذخیره شد")
                 
                 return items
@@ -523,10 +535,9 @@ async def get_user_reels_v2(username: str, context=None):
                                 reel_key = f"reel:{username}:{post.get('id', '')}"
                                 reel_result = {"caption": caption_text, "items": [{"type": "video", "url": video_url}]}
                                 
-                                # چک کن قبلاً ذخیره شده؟
                                 if not _get_memory_cache(f"reel:{reel_key}"):
                                     _set_memory_cache(f"reel:{reel_key}", reel_result, ttl=86400)
-                                    await save_media_to_channel(context, reel_key, reel_result)
+                                    await save_media_to_channel(context, reel_key, reel_result, 'reel')
                 
                 result_data = {
                     "items": items,
@@ -534,7 +545,6 @@ async def get_user_reels_v2(username: str, context=None):
                     "username": username
                 } if items else None
                 
-                # ذخیره لیست ریل‌ها در کش
                 if result_data:
                     _set_memory_cache(cache_key, result_data, ttl=3600)
                     if context:
@@ -605,7 +615,6 @@ async def get_instagram_highlights(username: str, context=None):
                                 "cover": h.get("cover_url") or h.get("cover"),
                             })
                 
-                # ذخیره در کش
                 if highlights:
                     _set_memory_cache(cache_key, highlights, ttl=21600)
                     if context:
