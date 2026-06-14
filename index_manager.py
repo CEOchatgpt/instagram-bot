@@ -1,16 +1,16 @@
-# index_manager.py - نسخه با قفل فایل (Thread-Safe)
+# index_manager.py - نسخه با ذخیره در کانال تلگرام
 
 import json
 import os
 import logging
 import time
-import fcntl
 import asyncio
 from typing import Optional, Dict, Any
 from functools import wraps
 
 logger = logging.getLogger(__name__)
 
+# برای ذخیره محلی (کش موقت)
 INDEX_FILE = "channel_index.json"
 _index_cache = None
 _cache_time = 0
@@ -19,129 +19,186 @@ CACHE_TTL = 60
 # قفل برای جلوگیری از همزمانی
 _write_lock = asyncio.Lock()
 
+# آیدی کانال برای ذخیره دائمی ایندکس (از config میاد)
+INDEX_CHANNEL_ID = None
+_context = None  # context برای ارسال به تلگرام
 
-def _sync_wrapper(func):
-    """تبدیل تابع همزمان به ناهمزمان با قفل"""
-    @wraps(func)
-    async def wrapper(*args, **kwargs):
-        async with _write_lock:
-            return await asyncio.to_thread(func, *args, **kwargs)
-    return wrapper
+
+def set_context(context):
+    """تنظیم context برای دسترسی به بات"""
+    global _context
+    _context = context
+
+
+def set_index_channel(channel_id: int):
+    """تنظیم آیدی کانال ایندکس"""
+    global INDEX_CHANNEL_ID
+    INDEX_CHANNEL_ID = channel_id
+    logger.info(f"📊 کانال ایندکس تنظیم شد: {INDEX_CHANNEL_ID}")
+
+
+async def _save_index_to_channel(index: Dict):
+    """ذخیره ایندکس در کانال تلگرام (دائمی)"""
+    global INDEX_CHANNEL_ID, _context
+    
+    if not INDEX_CHANNEL_ID or not _context:
+        logger.warning("⚠️ کانال ایندکس یا context تنظیم نشده! ذخیره فقط در فایل محلی")
+        return False
+    
+    try:
+        # تبدیل ایندکس به JSON
+        index_json = json.dumps(index, ensure_ascii=False, indent=2)
+        
+        # اگر خیلی طولانی بود، فشرده کن
+        if len(index_json) > 4000:
+            # فشرده‌سازی (بدون indent)
+            index_json = json.dumps(index, ensure_ascii=False)
+        
+        # پیدا کردن پیام قبلی ایندکس
+        found_msg_id = None
+        async for msg in _context.bot.get_chat_history(chat_id=INDEX_CHANNEL_ID, limit=20):
+            if msg.text and msg.text.startswith("📊 **ایندکس دیتابیس**"):
+                found_msg_id = msg.message_id
+                break
+        
+        # فرمت پیام
+        message_text = f"📊 **ایندکس دیتابیس**\n🕐 آخرین بروزرسانی: {time.strftime('%Y-%m-%d %H:%M:%S')}\n📦 تعداد آیتم: {len(index)}\n\n```json\n{index_json[:3500]}\n```"
+        
+        if found_msg_id:
+            # آپدیت پیام قبلی
+            await _context.bot.edit_message_text(
+                chat_id=INDEX_CHANNEL_ID,
+                message_id=found_msg_id,
+                text=message_text,
+                parse_mode='Markdown'
+            )
+            logger.info(f"✅ ایندکس در کانال آپدیت شد (msg_id: {found_msg_id})")
+        else:
+            # ارسال پیام جدید
+            msg = await _context.bot.send_message(
+                chat_id=INDEX_CHANNEL_ID,
+                text=message_text,
+                parse_mode='Markdown'
+            )
+            logger.info(f"✅ ایندکس در کانال ذخیره شد (msg_id: {msg.message_id})")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ خطا در ذخیره ایندکس در کانال: {e}")
+        return False
+
+
+async def _load_index_from_channel() -> Optional[Dict]:
+    """بارگذاری ایندکس از کانال تلگرام"""
+    global INDEX_CHANNEL_ID, _context
+    
+    if not INDEX_CHANNEL_ID or not _context:
+        logger.warning("⚠️ کانال ایندکس یا context تنظیم نشده!")
+        return None
+    
+    try:
+        # پیدا کردن آخرین پیام ایندکس
+        async for msg in _context.bot.get_chat_history(chat_id=INDEX_CHANNEL_ID, limit=20):
+            if msg.text and msg.text.startswith("📊 **ایندکس دیتابیس**"):
+                # استخراج JSON از متن
+                text = msg.text
+                if "```json" in text:
+                    json_text = text.split("```json")[1].split("```")[0].strip()
+                    index_data = json.loads(json_text)
+                    logger.info(f"✅ ایندکس از کانال بارگذاری شد - {len(index_data)} آیتم")
+                    return index_data
+                break
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"❌ خطا در بارگذاری ایندکس از کانال: {e}")
+        return None
 
 
 def _load_index_sync() -> Dict:
-    """بارگذاری فایل ایندکس (همزمان - Thread-safe)"""
+    """بارگذاری فایل ایندکس (همزمان - اولویت با کانال)"""
     global _index_cache, _cache_time
     
     # چک کش
     if _index_cache is not None and (time.time() - _cache_time) < CACHE_TTL:
         return _index_cache
     
+    # تلاش برای بارگذاری از کانال (از طریق asyncio)
+    # این تابع sync است، پس باید به صورت ویژه handle کنیم
+    
+    # بارگذاری از فایل محلی (به عنوان fallback)
     try:
         if os.path.exists(INDEX_FILE):
             with open(INDEX_FILE, 'r', encoding='utf-8') as f:
-                # قفل اشتراکی برای خوندن
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                try:
-                    _index_cache = json.load(f)
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                _index_cache = json.load(f)
                 _cache_time = time.time()
+                logger.info(f"📁 ایندکس از فایل محلی بارگذاری شد - {len(_index_cache)} آیتم")
                 return _index_cache
         else:
             _index_cache = {}
             return _index_cache
     except Exception as e:
-        logger.error(f"خطا در بارگذاری ایندکس: {e}")
+        logger.error(f"خطا در بارگذاری ایندکس از فایل: {e}")
         return {}
 
 
 def _save_index_sync(index: Dict):
-    """ذخیره فایل ایندکس (همزمان - Thread-safe با قفل انحصاری)"""
+    """ذخیره فایل ایندکس (همزمان)"""
     global _index_cache, _cache_time
     
-    # ایجاد بکاپ قبل از ذخیره
-    if os.path.exists(INDEX_FILE):
-        try:
-            backup_file = f"{INDEX_FILE}.backup"
-            with open(INDEX_FILE, 'r', encoding='utf-8') as f_src:
-                with open(backup_file, 'w', encoding='utf-8') as f_dst:
-                    f_dst.write(f_src.read())
-        except Exception as e:
-            logger.warning(f"خطا در ایجاد بکاپ: {e}")
-    
     try:
-        # اول ذخیره در فایل موقت
-        temp_file = f"{INDEX_FILE}.tmp"
-        with open(temp_file, 'w', encoding='utf-8') as f:
-            # قفل انحصاری برای نوشتن
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            try:
-                json.dump(index, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        
-        # جایگزینی اتمیک (atomic replace)
-        os.replace(temp_file, INDEX_FILE)
+        # همیشه در فایل محلی ذخیره کن
+        with open(INDEX_FILE, 'w', encoding='utf-8') as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
         
         _index_cache = index
         _cache_time = time.time()
-        logger.info(f"✅ ایندکس ذخیره شد - {len(index)} آیتم")
+        logger.info(f"✅ ایندکس در فایل محلی ذخیره شد - {len(index)} آیتم")
         
-        # حذف بکاپ قدیمی بعد از ذخیره موفق
-        backup_file = f"{INDEX_FILE}.backup"
-        if os.path.exists(backup_file):
-            try:
-                os.remove(backup_file)
-            except:
-                pass
-                
     except Exception as e:
-        logger.error(f"خطا در ذخیره ایندکس: {e}")
-        # تلاش برای بازیابی از بکاپ
-        backup_file = f"{INDEX_FILE}.backup"
-        if os.path.exists(backup_file):
-            try:
-                os.replace(backup_file, INDEX_FILE)
-                logger.info(f"✅ ایندکس از بکاپ بازیابی شد")
-            except:
-                logger.error(f"❌ خطا در بازیابی از بکاپ")
+        logger.error(f"خطا در ذخیره ایندکس در فایل: {e}")
 
 
 # ========== توابع عمومی با قفل ==========
 
-async def save_to_index(key: str, message_id: int, data_type: str, channel_id: int, metadata: Dict = None):
+async def save_to_index(key: str, message_id: int, data_type: str, metadata: Dict = None):
+    """ذخیره در ایندکس (هم در فایل محلی، هم در کانال)"""
     async with _write_lock:
         index = await asyncio.to_thread(_load_index_sync)
         
         index[key] = {
             "message_id": message_id,
-            "channel_id": channel_id,  # اضافه شد
             "type": data_type,
             "timestamp": time.time(),
             "metadata": metadata or {}
         }
         
+        # ذخیره در فایل محلی
         await asyncio.to_thread(_save_index_sync, index)
+        
+        # ذخیره در کانال تلگرام (دائمی)
+        await _save_index_to_channel(index)
+        
         logger.info(f"📝 ایندکس: {key} -> {message_id}")
 
 
 async def get_from_index(key: str) -> Optional[Dict]:
-    """دریافت از ایندکس (فقط خواندن - نیازی به قفل نیست)"""
+    """دریافت از ایندکس"""
     index = await asyncio.to_thread(_load_index_sync)
     return index.get(key)
 
 
 async def delete_from_index(key: str) -> bool:
-    """حذف از ایندکس با قفل"""
+    """حذف از ایندکس"""
     async with _write_lock:
         index = await asyncio.to_thread(_load_index_sync)
         
         if key in index:
             del index[key]
             await asyncio.to_thread(_save_index_sync, index)
+            await _save_index_to_channel(index)
             logger.info(f"🗑️ حذف از ایندکس: {key}")
             return True
         
@@ -149,7 +206,7 @@ async def delete_from_index(key: str) -> bool:
 
 
 async def find_by_type(data_type: str) -> list:
-    """پیدا کردن با نوع (فقط خواندن)"""
+    """پیدا کردن با نوع"""
     index = await asyncio.to_thread(_load_index_sync)
     results = []
     
@@ -165,7 +222,7 @@ async def find_by_type(data_type: str) -> list:
 
 
 async def find_by_keyword(keyword: str) -> list:
-    """جستجو با کلمه کلیدی (فقط خواندن)"""
+    """جستجو با کلمه کلیدی"""
     index = await asyncio.to_thread(_load_index_sync)
     results = []
     keyword_lower = keyword.lower()
@@ -183,13 +240,13 @@ async def find_by_keyword(keyword: str) -> list:
 
 
 async def get_all_keys() -> list:
-    """دریافت همه کلیدها (فقط خواندن)"""
+    """دریافت همه کلیدها"""
     index = await asyncio.to_thread(_load_index_sync)
     return list(index.keys())
 
 
 async def get_index_stats() -> Dict:
-    """آمار ایندکس (فقط خواندن)"""
+    """آمار ایندکس"""
     index = await asyncio.to_thread(_load_index_sync)
     
     stats = {
@@ -213,31 +270,8 @@ async def get_index_stats() -> Dict:
     return stats
 
 
-async def clean_old_index(max_age_days: int = 30):
-    """پاک کردن ایندکس‌های قدیمی با قفل"""
-    async with _write_lock:
-        index = await asyncio.to_thread(_load_index_sync)
-        now = time.time()
-        max_age_seconds = max_age_days * 24 * 3600
-        
-        to_delete = []
-        for key, value in index.items():
-            timestamp = value.get("timestamp", 0)
-            if now - timestamp > max_age_seconds:
-                to_delete.append(key)
-        
-        for key in to_delete:
-            del index[key]
-        
-        if to_delete:
-            await asyncio.to_thread(_save_index_sync, index)
-            logger.info(f"🧹 {len(to_delete)} آیتم قدیمی از ایندکس پاک شد")
-        
-        return len(to_delete)
-
-
 async def search_by_media_id(media_id: str) -> dict:
-    """جستجو با شناسه مدیا (فقط خواندن)"""
+    """جستجو با شناسه مدیا"""
     index = await asyncio.to_thread(_load_index_sync)
     for key, value in index.items():
         if value.get('metadata', {}).get('media_id') == media_id:
@@ -260,30 +294,47 @@ def parse_storage_key(key: str) -> tuple:
     return "unknown", key
 
 
-# ========== ابزارهای بازیابی ==========
+async def sync_index_from_channel():
+    """همگام‌سازی ایندکس از کانال (بعد از ریستارت)"""
+    global _index_cache, _cache_time
+    
+    index = await _load_index_from_channel()
+    if index:
+        _index_cache = index
+        _cache_time = time.time()
+        
+        # همچنین در فایل محلی ذخیره کن
+        await asyncio.to_thread(_save_index_sync, index)
+        logger.info(f"🔄 ایندکس از کانال همگام‌سازی شد - {len(index)} آیتم")
+        return True
+    
+    logger.warning("⚠️ نتوانستم ایندکس را از کانال بارگذاری کنم")
+    return False
+
 
 async def repair_index_from_backup():
     """بازیابی ایندکس از بکاپ در صورت خرابی"""
+    # اول تلاش از کانال
+    index = await _load_index_from_channel()
+    if index:
+        await asyncio.to_thread(_save_index_sync, index)
+        logger.info(f"✅ ایندکس از کانال بازیابی شد - {len(index)} آیتم")
+        return True
+    
+    # سپس تلاش از فایل بکاپ محلی
     backup_file = f"{INDEX_FILE}.backup"
-    
-    if not os.path.exists(backup_file):
-        logger.warning("⚠️ فایل بکاپ وجود ندارد")
-        return False
-    
-    try:
-        async with _write_lock:
-            # بارگذاری بکاپ
+    if os.path.exists(backup_file):
+        try:
             with open(backup_file, 'r', encoding='utf-8') as f:
                 backup_data = json.load(f)
-            
-            # ذخیره به عنوان ایندکس اصلی
             await asyncio.to_thread(_save_index_sync, backup_data)
-            logger.info(f"✅ ایندکس از بکاپ بازیابی شد - {len(backup_data)} آیتم")
+            logger.info(f"✅ ایندکس از فایل بکاپ بازیابی شد - {len(backup_data)} آیتم")
             return True
-            
-    except Exception as e:
-        logger.error(f"❌ خطا در بازیابی از بکاپ: {e}")
-        return False
+        except:
+            pass
+    
+    logger.error("❌ هیچ منبع معتبری برای بازیابی ایندکس وجود ندارد")
+    return False
 
 
 async def validate_index() -> bool:
@@ -291,10 +342,9 @@ async def validate_index() -> bool:
     try:
         index = await asyncio.to_thread(_load_index_sync)
         
-        # چک کردن ساختار
         for key, value in index.items():
             if not isinstance(value, dict):
-                logger.error(f"❌ ایندکس خراب: {key}不是一个 dict")
+                logger.error(f"❌ ایندکس خراب: {key}")
                 return False
             if "message_id" not in value:
                 logger.error(f"❌ ایندکس خراب: {key} فاقد message_id")
@@ -304,7 +354,7 @@ async def validate_index() -> bool:
         return True
         
     except json.JSONDecodeError as e:
-        logger.error(f"❌ ایندکس خراب (JSON Decode Error): {e}")
+        logger.error(f"❌ ایندکس خراب (JSON Error): {e}")
         return False
     except Exception as e:
         logger.error(f"❌ خطا در اعتبارسنجی ایندکس: {e}")
