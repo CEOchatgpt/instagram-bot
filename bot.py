@@ -45,10 +45,14 @@ from channel_cache import (
     save_highlights_list_to_channel,
     get_highlights_list_from_channel,
     save_user_setting_to_channel,
-    get_user_setting_from_channel
+    get_user_setting_from_channel,
+    get_media_by_key
 )
 
 from extract_instagram_id import extract_instagram_id
+
+from index_manager import get_from_index
+
 
 # تنظیمات لاگ
 logging.basicConfig(
@@ -593,8 +597,10 @@ async def settings_command(update: Update, context):
 
 # ========== هندلر لینک ==========
 
+# bot.py - جایگزینی کامل تابع handle_link
+
 async def handle_link(update: Update, context):
-    """هندلر لینک‌های اینستاگرام"""
+    """هندلر لینک‌های اینستاگرام با پشتیبانی کامل از کش"""
     url = update.message.text.strip()
     user_id = update.effective_user.id
 
@@ -634,6 +640,72 @@ async def handle_link(update: Update, context):
     if limited:
         await update.message.reply_text(f"⏳ زیادی سریع! {wait} ثانیه صبر کن.")
         return
+
+    # ========== بخش جدید: چک کردن کش قبل از API ==========
+    from extract_instagram_id import extract_instagram_id
+    from index_manager import get_from_index
+    from channel_cache import get_media_by_key
+    
+    extracted = extract_instagram_id(url)
+    if extracted:
+        check_key = f"media:{extracted['full_id']}"
+        logger.info(f"🔍 چک کردن ایندکس با کلید: {check_key}")
+        
+        index_data = await get_from_index(check_key)
+        if index_data:
+            logger.info(f"✅ آیتم در ایندکس پیدا شد! ارسال از کش...")
+            
+            cached_result = await get_media_by_key(context, check_key)
+            if cached_result and cached_result.get("items"):
+                items = cached_result["items"]
+                caption = cached_result.get("caption", "دانلود از اینستاگرام")
+                default_mode = await get_user_mode(user_id, context)
+                
+                status_msg = await update.message.reply_text("📦 ارسال از حافظه کش...")
+                
+                try:
+                    if len(items) == 1:
+                        item = items[0]
+                        if default_mode == "file":
+                            await context.bot.send_document(
+                                update.effective_chat.id, 
+                                item["url"], 
+                                caption=caption
+                            )
+                        else:
+                            if item["type"] == "video":
+                                await context.bot.send_video(
+                                    update.effective_chat.id, 
+                                    item["url"], 
+                                    supports_streaming=True, 
+                                    caption=caption
+                                )
+                            else:
+                                await context.bot.send_photo(
+                                    update.effective_chat.id, 
+                                    item["url"], 
+                                    caption=caption
+                                )
+                    else:
+                        if default_mode == "album":
+                            await send_media_group(update.effective_chat.id, context, items, caption)
+                        else:
+                            for i, item in enumerate(items):
+                                await context.bot.send_document(
+                                    update.effective_chat.id, 
+                                    item["url"], 
+                                    caption=caption if i == 0 else None
+                                )
+                                await asyncio.sleep(0.5)
+                    
+                    await status_msg.delete()
+                    return
+                    
+                except Exception as e:
+                    logger.warning(f"خطا در ارسال از کش: {e}")
+                    await status_msg.edit_text("🔄 خطا در ارسال از کش، تلاش مجدد از API...")
+                    # ادامه می‌دهیم تا از API بگیرد
+    # ========== انتهای بخش جدید ==========
 
     processing_msg = await update.message.reply_text("🔄 در حال پردازش...")
 
