@@ -112,13 +112,13 @@ def _save_index_sync(index: Dict):
 
 # ========== توابع عمومی با قفل ==========
 
-async def save_to_index(key: str, message_id: int, data_type: str, metadata: Dict = None):
-    """ذخیره ایندکس با قفل (Thread-Safe)"""
+async def save_to_index(key: str, message_id: int, data_type: str, channel_id: int, metadata: Dict = None):
     async with _write_lock:
         index = await asyncio.to_thread(_load_index_sync)
         
         index[key] = {
             "message_id": message_id,
+            "channel_id": channel_id,  # اضافه شد
             "type": data_type,
             "timestamp": time.time(),
             "metadata": metadata or {}
