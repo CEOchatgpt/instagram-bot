@@ -29,3 +29,11 @@ MEDIA_CHANNEL_ID = os.environ.get("MEDIA_CHANNEL_ID")          # برای مدی
 REELS_LIST_CHANNEL_ID = os.environ.get("REELS_LIST_CHANNEL_ID") # برای لیست ریل‌ها
 HIGHLIGHTS_LIST_CHANNEL_ID = os.environ.get("HIGHLIGHTS_LIST_CHANNEL_ID") # برای لیست هایلایت‌ها
 USER_SETTING_CHANNEL_ID = os.environ.get("USER_SETTING_CHANNEL_ID") # برای تنظیمات کاربر
+
+# بعد از تعریف متغیرها، لاگ بزنید
+print(f"🔧 تنظیمات کانال‌ها:")
+print(f"  PROFILE_CHANNEL_ID: {PROFILE_CHANNEL_ID}")
+print(f"  MEDIA_CHANNEL_ID: {MEDIA_CHANNEL_ID}")
+print(f"  REELS_LIST_CHANNEL_ID: {REELS_LIST_CHANNEL_ID}")
+print(f"  HIGHLIGHTS_LIST_CHANNEL_ID: {HIGHLIGHTS_LIST_CHANNEL_ID}")
+print(f"  USER_SETTING_CHANNEL_ID: {USER_SETTING_CHANNEL_ID}")
