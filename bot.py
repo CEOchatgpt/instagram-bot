@@ -1,5 +1,4 @@
 # bot.py - نسخه نهایی با پشتیبانی کامل از دیتابیس کانال، شناسه یکتا و تنظیمات دائمی
-
 import asyncio
 import logging
 import time
