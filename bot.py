@@ -17,7 +17,7 @@ from telegram.ext import (
     InlineQueryHandler
 )
 
-from config import BOT_TOKEN, ADMIN_ID
+from config import BOT_TOKEN, ADMIN_ID,INDEX_CHANNEL_ID
 
 from rapidapi_service import (
     get_instagram_media,
