@@ -227,35 +227,22 @@ async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username:
         return None
 
 
-# ========== ذخیره و بازیابی مدیا (عکس و ویدیو) ==========
+# ========== تابع اصلی ذخیره (با کلید مشخص) ==========
 
-async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: str, media_data: dict) -> Optional[int]:
-    """ذخیره محتوای مدیا به صورت فایل واقعی در کانال"""
-    
+async def save_media_with_key(context: ContextTypes.DEFAULT_TYPE, storage_key: str, media_data: dict, original_url: str = None) -> Optional[int]:
+    """
+    ذخیره مدیا با کلید مشخص (برای اطمینان از یکسان بودن کلید در ذخیره و بازیابی)
+    """
     if not DATABASE_CHANNEL_ID:
         logger.warning("⚠️ DATABASE_CHANNEL_ID تنظیم نشده!")
         return None
     
     try:
-        # استخراج شناسه یکتا اگر امکانش هست
-        from extract_instagram_id import extract_instagram_id
-        
-        extracted = extract_instagram_id(media_key)
-        if extracted:
-            storage_key = f"media:{extracted['full_id']}"
-            logger.info(f"🔑 استفاده از کلید پایدار: {storage_key}")
-        elif ":" in media_key and not media_key.startswith("media:"):
-            storage_key = f"media:{media_key}"
-            logger.info(f"🔑 استفاده از کلید استاندارد: {storage_key}")
-        else:
-            key_hash = _generate_key_hash(media_key)
-            storage_key = generate_storage_key("media", key_hash)
-            logger.info(f"🔑 استفاده از کلید هش شده: {storage_key}")
-        
         # چک کن قبلاً ذخیره شده؟
+        from index_manager import get_from_index
         existing = await get_from_index(storage_key)
         if existing:
-            logger.info(f"📦 مدیا {storage_key} قبلاً ذخیره شده")
+            logger.info(f"📦 مدیا {storage_key} قبلاً ذخیره شده (msg_id: {existing['message_id']})")
             return existing["message_id"]
         
         items = media_data.get("items", [])
@@ -271,7 +258,6 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
             if not item_url:
                 continue
             
-            # ساخت کپشن برای پیام ذخیره شده
             item_caption = f"""📦 محتوای ذخیره شده
 ━━━━━━━━━━━━━━━━
 🔑 کلید: {storage_key}
@@ -315,8 +301,9 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
                     logger.error(f"خطا در ارسال داکیومنت: {e2}")
         
         if message_ids:
+            from index_manager import save_to_index
             await save_to_index(storage_key, message_ids[0], "media", {
-                "original_key": media_key,
+                "original_url": original_url,
                 "item_count": len(message_ids),
                 "message_ids": message_ids
             })
@@ -336,39 +323,50 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
         return None
 
 
-async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: str) -> Optional[dict]:
-    """بازیابی مدیا از کانال"""
+# ========== تابع ذخیره با نرمال‌سازی کلید (جایگزین save_media_to_channel قبلی) ==========
+
+async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: str, media_data: dict) -> Optional[int]:
+    """
+    ذخیره محتوای مدیا - با نرمال‌سازی کلید برای اطمینان از یکسان بودن
+    """
+    from extract_instagram_id import normalize_url, extract_instagram_id
     
-    if not DATABASE_CHANNEL_ID:
-        return None
-    
-    # ساخت کلید یکسان با روش ذخیره
-    from extract_instagram_id import extract_instagram_id
-    
+    # نرمال‌سازی کلید
     extracted = extract_instagram_id(media_key)
     if extracted:
         storage_key = f"media:{extracted['full_id']}"
-        display_key = extracted['id']
-    elif ":" in media_key and not media_key.startswith("media:"):
-        storage_key = f"media:{media_key}"
-        display_key = media_key
     else:
-        key_hash = _generate_key_hash(media_key)
-        storage_key = generate_storage_key("media", key_hash)
-        display_key = key_hash
+        normalized = normalize_url(media_key)
+        if "media:" in normalized:
+            storage_key = normalized
+        else:
+            storage_key = f"media:{hashlib.md5(normalized.encode()).hexdigest()}"
+    
+    return await save_media_with_key(context, storage_key, media_data, media_key)
+
+
+# ========== تابع بازیابی با کلید مشخص ==========
+
+async def get_media_by_key(context: ContextTypes.DEFAULT_TYPE, storage_key: str) -> Optional[dict]:
+    """
+    بازیابی مدیا با کلید مستقیم (بدون نیاز به ساخت مجدد کلید)
+    """
+    if not DATABASE_CHANNEL_ID:
+        return None
     
     cache_key = f"media:{storage_key}"
     
     # چک کش حافظه
     cached = _get_memory_cache(cache_key)
     if cached:
-        logger.info(f"📦 مدیا {display_key} از کش برگردانده شد")
+        logger.info(f"📦 مدیا {storage_key} از کش برگردانده شد")
         return cached.get("data")
     
     # چک ایندکس
+    from index_manager import get_from_index
     index_data = await get_from_index(storage_key)
     if not index_data:
-        logger.info(f"🔍 مدیا {display_key} در ایندکس یافت نشد")
+        logger.info(f"🔍 مدیا {storage_key} در ایندکس یافت نشد")
         return None
     
     metadata = index_data.get("metadata", {})
@@ -394,7 +392,6 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
             )
             
             if msg.caption:
-                # استخراج کپشن اصلی
                 for line in msg.caption.split("\n"):
                     if "📝" in line:
                         caption = line.replace("📝", "").strip()
@@ -417,6 +414,27 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
     
     return None
 
+
+# ========== تابع بازیابی با نرمال‌سازی کلید (جایگزین get_media_from_channel قبلی) ==========
+
+async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: str) -> Optional[dict]:
+    """
+    بازیابی مدیا از کانال - با نرمال‌سازی کلید
+    """
+    from extract_instagram_id import normalize_url, extract_instagram_id
+    
+    # نرمال‌سازی کلید (همان روشی که در ذخیره استفاده شد)
+    extracted = extract_instagram_id(media_key)
+    if extracted:
+        storage_key = f"media:{extracted['full_id']}"
+    else:
+        normalized = normalize_url(media_key)
+        if "media:" in normalized:
+            storage_key = normalized
+        else:
+            storage_key = f"media:{hashlib.md5(normalized.encode()).hexdigest()}"
+    
+    return await get_media_by_key(context, storage_key)
 
 # ========== ذخیره و بازیابی لیست ریل‌ها ==========
 
@@ -697,166 +715,3 @@ async def get_index_stats() -> Dict:
     return await get_stats()
 
 # channel_cache.py - اضافه کردن این توابع:
-
-async def get_media_by_key(context: ContextTypes.DEFAULT_TYPE, storage_key: str) -> Optional[dict]:
-    """
-    بازیابی مدیا با کلید مستقیم (بدون نیاز به ساخت مجدد کلید)
-    """
-    if not DATABASE_CHANNEL_ID:
-        return None
-    
-    cache_key = f"media:{storage_key}"
-    
-    # چک کش حافظه
-    cached = _get_memory_cache(cache_key)
-    if cached:
-        logger.info(f"📦 مدیا {storage_key} از کش برگردانده شد")
-        return cached.get("data")
-    
-    # چک ایندکس
-    from index_manager import get_from_index
-    index_data = await get_from_index(storage_key)
-    if not index_data:
-        logger.info(f"🔍 مدیا {storage_key} در ایندکس یافت نشد")
-        return None
-    
-    metadata = index_data.get("metadata", {})
-    message_ids = metadata.get("message_ids", [])
-    
-    if not message_ids:
-        message_id = index_data.get("message_id")
-        if message_id:
-            message_ids = [message_id]
-    
-    if not message_ids:
-        return None
-    
-    items = []
-    caption = ""
-    
-    for msg_id in message_ids[:10]:
-        try:
-            msg = await context.bot.forward_message(
-                chat_id=DATABASE_CHANNEL_ID,
-                from_chat_id=DATABASE_CHANNEL_ID,
-                message_id=msg_id
-            )
-            
-            if msg.caption:
-                for line in msg.caption.split("\n"):
-                    if "📝" in line:
-                        caption = line.replace("📝", "").strip()
-                        break
-            
-            if msg.video:
-                items.append({"type": "video", "url": msg.video.file_id})
-            elif msg.photo:
-                items.append({"type": "photo", "url": msg.photo[-1].file_id})
-            elif msg.document:
-                items.append({"type": "document", "url": msg.document.file_id})
-                
-        except Exception as e:
-            logger.warning(f"خطا در بازیابی پیام {msg_id}: {e}")
-    
-    if items:
-        result = {"caption": caption, "items": items}
-        _set_memory_cache(cache_key, {"data": result}, ttl=86400)
-        return result
-    
-    return None
-
-
-async def save_media_with_key(context: ContextTypes.DEFAULT_TYPE, storage_key: str, media_data: dict, original_url: str = None) -> Optional[int]:
-    """
-    ذخیره مدیا با کلید مشخص (برای اطمینان از یکسان بودن کلید در ذخیره و بازیابی)
-    """
-    if not DATABASE_CHANNEL_ID:
-        logger.warning("⚠️ DATABASE_CHANNEL_ID تنظیم نشده!")
-        return None
-    
-    try:
-        # چک کن قبلاً ذخیره شده؟
-        from index_manager import get_from_index
-        existing = await get_from_index(storage_key)
-        if existing:
-            logger.info(f"📦 مدیا {storage_key} قبلاً ذخیره شده (msg_id: {existing['message_id']})")
-            return existing["message_id"]
-        
-        items = media_data.get("items", [])
-        caption = media_data.get("caption", "بدون کپشن")
-        formatted_caption = _format_caption(caption, 200)
-        
-        message_ids = []
-        
-        for idx, item in enumerate(items):
-            item_type = item.get("type", "photo")
-            item_url = item.get("url")
-            
-            if not item_url:
-                continue
-            
-            item_caption = f"""📦 محتوای ذخیره شده
-━━━━━━━━━━━━━━━━
-🔑 کلید: {storage_key}
-📌 {idx + 1}/{len(items)}
-📝 {formatted_caption}
-━━━━━━━━━━━━━━━━
-💾 {time.strftime('%Y/%m/%d %H:%M:%S')}"""
-            
-            try:
-                if item_type == "video":
-                    msg = await context.bot.send_video(
-                        chat_id=DATABASE_CHANNEL_ID,
-                        video=item_url,
-                        caption=item_caption[:1024],
-                        parse_mode='HTML',
-                        supports_streaming=True
-                    )
-                else:
-                    msg = await context.bot.send_photo(
-                        chat_id=DATABASE_CHANNEL_ID,
-                        photo=item_url,
-                        caption=item_caption[:1024],
-                        parse_mode='HTML'
-                    )
-                
-                message_ids.append(msg.message_id)
-                await asyncio.sleep(0.3)
-                
-            except Exception as e:
-                logger.warning(f"خطا در ارسال آیتم {idx}: {e}")
-                try:
-                    msg = await context.bot.send_document(
-                        chat_id=DATABASE_CHANNEL_ID,
-                        document=item_url,
-                        caption=item_caption[:900],
-                        parse_mode='HTML'
-                    )
-                    message_ids.append(msg.message_id)
-                    await asyncio.sleep(0.3)
-                except Exception as e2:
-                    logger.error(f"خطا در ارسال داکیومنت: {e2}")
-        
-        if message_ids:
-            from index_manager import save_to_index
-            await save_to_index(storage_key, message_ids[0], "media", {
-                "original_url": original_url,
-                "item_count": len(message_ids),
-                "message_ids": message_ids
-            })
-            
-            _set_memory_cache(f"media:{storage_key}", {
-                "message_ids": message_ids,
-                "data": media_data
-            }, ttl=86400)
-            
-            logger.info(f"✅ {len(message_ids)} رسانه ذخیره شد (key: {storage_key})")
-            return message_ids[0]
-        
-        return None
-        
-    except Exception as e:
-        logger.error(f"❌ خطا در ذخیره مدیا: {e}")
-        return None
-
-
