@@ -42,7 +42,7 @@ async def _save_index_to_channel(index: Dict):
     global INDEX_CHANNEL_ID, _context
     
     if not INDEX_CHANNEL_ID or not _context:
-        logger.warning("⚠️ کانال ایندکس یا context تنظیم نشده! ذخیره فقط در فایل محلی")
+        logger.warning("⚠️ کانال ایندکس یا context تنظیم نشده!")
         return False
     
     try:
@@ -51,36 +51,43 @@ async def _save_index_to_channel(index: Dict):
         
         # اگر خیلی طولانی بود، فشرده کن
         if len(index_json) > 4000:
-            # فشرده‌سازی (بدون indent)
             index_json = json.dumps(index, ensure_ascii=False)
-        
-        # پیدا کردن پیام قبلی ایندکس
-        found_msg_id = None
-        async for msg in _context.bot.get_chat_history(chat_id=INDEX_CHANNEL_ID, limit=20):
-            if msg.text and msg.text.startswith("📊 **ایندکس دیتابیس**"):
-                found_msg_id = msg.message_id
-                break
         
         # فرمت پیام
         message_text = f"📊 **ایندکس دیتابیس**\n🕐 آخرین بروزرسانی: {time.strftime('%Y-%m-%d %H:%M:%S')}\n📦 تعداد آیتم: {len(index)}\n\n```json\n{index_json[:3500]}\n```"
         
-        if found_msg_id:
-            # آپدیت پیام قبلی
-            await _context.bot.edit_message_text(
-                chat_id=INDEX_CHANNEL_ID,
-                message_id=found_msg_id,
-                text=message_text,
-                parse_mode='Markdown'
-            )
-            logger.info(f"✅ ایندکس در کانال آپدیت شد (msg_id: {found_msg_id})")
-        else:
-            # ارسال پیام جدید
-            msg = await _context.bot.send_message(
-                chat_id=INDEX_CHANNEL_ID,
-                text=message_text,
-                parse_mode='Markdown'
-            )
-            logger.info(f"✅ ایندکس در کانال ذخیره شد (msg_id: {msg.message_id})")
+        # سعی می‌کنیم پیام قبلی را پیدا کنیم
+        found_msg_id = None
+        
+        # روش صحیح: استفاده از get_updates به جای get_chat_history
+        # یا نگهداری message_id در حافظه
+        global _index_message_id
+        if '_index_message_id' not in globals():
+            global _index_message_id
+            _index_message_id = None
+        
+        if _index_message_id:
+            try:
+                await _context.bot.edit_message_text(
+                    chat_id=INDEX_CHANNEL_ID,
+                    message_id=_index_message_id,
+                    text=message_text,
+                    parse_mode='Markdown'
+                )
+                logger.info(f"✅ ایندکس در کانال آپدیت شد (msg_id: {_index_message_id})")
+                return True
+            except Exception as e:
+                logger.warning(f"خطا در آپدیت پیام: {e}")
+                _index_message_id = None
+        
+        # ارسال پیام جدید
+        msg = await _context.bot.send_message(
+            chat_id=INDEX_CHANNEL_ID,
+            text=message_text,
+            parse_mode='Markdown'
+        )
+        _index_message_id = msg.message_id
+        logger.info(f"✅ ایندکس در کانال ذخیره شد (msg_id: {msg.message_id})")
         
         return True
         
@@ -98,17 +105,45 @@ async def _load_index_from_channel() -> Optional[Dict]:
         return None
     
     try:
-        # پیدا کردن آخرین پیام ایندکس
-        async for msg in _context.bot.get_chat_history(chat_id=INDEX_CHANNEL_ID, limit=20):
-            if msg.text and msg.text.startswith("📊 **ایندکس دیتابیس**"):
-                # استخراج JSON از متن
-                text = msg.text
-                if "```json" in text:
-                    json_text = text.split("```json")[1].split("```")[0].strip()
+        # روش ساده: از یک پیام ثابت استفاده می‌کنیم
+        # یا می‌توانیم از آخرین پیام کانال استفاده کنیم
+        
+        # گزینه 1: اگر message_id را در حافظه داریم
+        global _index_message_id
+        if '_index_message_id' in globals() and _index_message_id:
+            try:
+                msg = await _context.bot.forward_message(
+                    chat_id=INDEX_CHANNEL_ID,
+                    from_chat_id=INDEX_CHANNEL_ID,
+                    message_id=_index_message_id
+                )
+                
+                if msg.text and "```json" in msg.text:
+                    json_text = msg.text.split("```json")[1].split("```")[0].strip()
                     index_data = json.loads(json_text)
                     logger.info(f"✅ ایندکس از کانال بارگذاری شد - {len(index_data)} آیتم")
+                    await msg.delete()  # پاک کردن پیام فوروارد شده
                     return index_data
-                break
+            except:
+                pass
+        
+        # گزینه 2: درخواست از API برای دریافت آخرین پیام‌ها
+        # این روش نیاز به admin rights دارد
+        try:
+            # استفاده از get_updates (این روش برای کانال‌ها محدود است)
+            updates = await _context.bot.get_updates(limit=10)
+            for update in updates:
+                if update.channel_post and update.channel_post.chat_id == INDEX_CHANNEL_ID:
+                    if update.channel_post.text and "ایندکس دیتابیس" in update.channel_post.text:
+                        text = update.channel_post.text
+                        if "```json" in text:
+                            json_text = text.split("```json")[1].split("```")[0].strip()
+                            index_data = json.loads(json_text)
+                            _index_message_id = update.channel_post.message_id
+                            logger.info(f"✅ ایندکس از کانال بارگذاری شد - {len(index_data)} آیتم")
+                            return index_data
+        except Exception as e:
+            logger.warning(f"خطا در get_updates: {e}")
         
         return None
         
