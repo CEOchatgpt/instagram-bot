@@ -50,7 +50,7 @@ async def get_user_mode(user_id: int, context=None) -> str:
     if context and DATABASE_CHANNEL_ID:
         try:
             storage_key = generate_storage_key("user_setting", str(user_id))
-            index_data = get_from_index(storage_key)
+            index_data = await get_from_index(storage_key)
             
             if index_data:
                 message_id = index_data.get("message_id")
@@ -109,7 +109,7 @@ async def set_user_mode(user_id: int, mode: str, context=None) -> bool:
 💾 ذخیره: {time.strftime('%Y/%m/%d %H:%M:%S')}"""
             
             # حذف پیام قبلی
-            existing = get_from_index(storage_key)
+            existing = await get_from_index(storage_key)
             if existing:
                 try:
                     await context.bot.delete_message(
