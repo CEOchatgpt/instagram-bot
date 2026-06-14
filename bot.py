@@ -112,7 +112,8 @@ async def start(update: Update, context):
     )
 
 
-# ========== پروفایل ==========
+
+# ========== پروفایل (فقط عکس + اسم + یوزرنیم) ==========
 async def profile_command(update: Update, context, username=None):
     if username is None:
         if not context.args:
@@ -129,19 +130,24 @@ async def profile_command(update: Update, context, username=None):
             await processing.edit_text("❌ نتونستم پروفایل رو پیدا کنم.")
             return
         
-        private_text = "🔒 خصوصی" if profile.get('is_private') else "🌐 عمومی"
-        verified_text = "✅ تأیید شده" if profile.get('is_verified') else ""
-        caption = (f"👤 <b>{profile.get('full_name', username)}</b>\n🔖 @{profile.get('username', username)}\n"
-                   f"{private_text} {verified_text}\n\n📝 {profile.get('biography', 'بدون بیو')[:280]}\n\n"
-                   f"❤️ {profile.get('followers', 0):,} دنبال‌کننده\n👥 {profile.get('following', 0):,} دنبال‌شونده\n"
-                   f"📸 {profile.get('posts', 0):,} پست\n")
-        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")]])
+        caption = f"👤 <b>{profile.get('full_name', username)}</b>\n🔖 @{profile.get('username', username)}"
+        
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 بازگشت به منوی انتخاب", callback_data="back_to_username_menu")]
+        ])
         
         if profile.get("profile_pic"):
-            await context.bot.send_photo(chat_id=update.effective_chat.id, photo=profile["profile_pic"], caption=caption, parse_mode='HTML', reply_markup=reply_markup)
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=profile["profile_pic"],
+                caption=caption,
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
             await processing.delete()
         else:
             await processing.edit_text(caption, parse_mode='HTML', reply_markup=reply_markup)
+            
     except Exception as e:
         logger.error(f"Error in profile_command: {e}")
         await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
