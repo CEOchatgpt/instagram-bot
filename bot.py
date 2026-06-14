@@ -890,66 +890,77 @@ async def inline_query(update: Update, context):
 
 # ========== هندلر ورودی مستقیم ==========
 
+# در handle_direct_input، بخش جستجوی شناسه را قوی‌تر کنید:
+
 async def handle_direct_input(update: Update, context):
     """هندلر برای ورودی مستقیم توی بات"""
+    
+    if not update.message:
+        return
+    
     text = update.message.text.strip()
-
-    # چک کردن شناسه یکتا (مثل 96TXg1muSP یا DZcDzv9iJOJ)
+    
+    # ========== جستجوی هوشمند در دیتابیس ==========
+    
+    # 1. شناسه یکتا (مانند DZLDbXgjNPj)
     if re.match(r'^[A-Za-z0-9_-]{8,15}$', text):
-        # کاربر یک شناسه یکتا فرستاده
-        processing = await update.message.reply_text(f"🔍 شناسه {text} دریافت شد. در حال جستجو...")
+        processing = await update.message.reply_text("🔍 در حال جستجوی شناسه در دیتابیس...")
         
-        # تلاش برای پیدا کردن در دیتابیس محلی
-        from index_manager import search_by_media_id
+        # جستجوی سریع با استفاده از ایندکس جدید
+        from index_manager import search_by_media_id, search_by_keyword
         found = await search_by_media_id(text)
+        
+        if not found:
+            # اگر با media_id پیدا نشد، با keyword جستجو کن
+            results = await search_by_keyword(text)
+            found = results[0] if results else None
         
         if found:
             await processing.edit_text(f"✅ محتوا با شناسه {text} در دیتابیس پیدا شد!")
-            # ساخت URL فرضی و تلاش برای بازیابی
-            fake_url = f"https://www.instagram.com/p/{text}/"
-            result = await get_instagram_media(fake_url, context)
-            if result and result.get("items"):
-                await processing.delete()
-                # ارسال محتوا
-                items = result.get("items", [])
-                caption = result.get("caption", "دانلود از اینستاگرام")
-                default_mode = await get_user_mode(update.effective_user.id, context)
-                
-                if len(items) == 1:
-                    item = items[0]
-                    if default_mode == "file":
-                        await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption)
-                    else:
-                        if item["type"] == "video":
-                            await context.bot.send_video(update.effective_chat.id, item["url"], supports_streaming=True, caption=caption)
-                        else:
-                            await context.bot.send_photo(update.effective_chat.id, item["url"], caption=caption)
-                else:
-                    if default_mode == "album":
-                        await send_media_group(update.effective_chat.id, context, items, caption)
-                    else:
-                        for i, item in enumerate(items):
-                            await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption if i == 0 else None)
-                            await asyncio.sleep(0.5)
-                return
+            
+            # ساخت کلید و بازیابی مدیا
+            cache_key = None
+            for key, value in found.items():
+                if key == 'key':
+                    cache_key = value
+                    break
+            
+            if cache_key:
+                from channel_cache import get_media_by_key
+                cached_result = await get_media_by_key(context, cache_key)
+                if cached_result and cached_result.get("items"):
+                    await processing.delete()
+                    await send_media_content(update, context, cached_result)
+                    return
         else:
             await processing.edit_text(f"📥 شناسه {text} در دیتابیس نیست. در حال دریافت از اینستاگرام...")
             fake_url = f"https://www.instagram.com/p/{text}/"
             update.message.text = fake_url
-            # ادامه میده به handle_link
     
+    # 2. ادامه کد فعلی...
     if text.startswith('@'):
         username = text.lstrip('@')
+        
+        # جستجوی پروفایل در دیتابیس
+        from index_manager import search_by_username
+        results = await search_by_username(username, limit=1)
+        
+        if results:
+            # پروفایل در دیتابیس هست
+            processing = await update.message.reply_text(f"📦 در حال بازیابی پروفایل @{username} از دیتابیس...")
+            profile = await get_profile_from_channel(context, username)
+            if profile:
+                await processing.delete()
+                await send_profile(update, context, profile)
+                return
+        
+        # ادامه منوی انتخاب...
         context.user_data['last_username'] = username
         keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("👤 پروفایل", callback_data=f"quick_profile_{username}"),
-                InlineKeyboardButton("🎬 ریلز", callback_data=f"quick_reels_{username}")
-            ],
-            [
-                InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
-                InlineKeyboardButton("📖 استوری", callback_data=f"quick_stories_{username}")
-            ],
+            [InlineKeyboardButton("👤 پروفایل", callback_data=f"quick_profile_{username}"),
+             InlineKeyboardButton("🎬 ریلز", callback_data=f"quick_reels_{username}")],
+            [InlineKeyboardButton("📚 هایلایت", callback_data=f"quick_highlights_{username}"),
+             InlineKeyboardButton("📖 استوری", callback_data=f"quick_stories_{username}")],
             [InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]
         ])
         
@@ -966,6 +977,46 @@ async def handle_direct_input(update: Update, context):
     
     await update.message.reply_text("❌ لطفاً یک یوزرنیم (با @) یا لینک اینستاگرام بفرست.")
 
+
+async def send_media_content(update: Update, context, media_data: dict):
+    """ارسال محتوای مدیا به کاربر"""
+    items = media_data.get("items", [])
+    caption = media_data.get("caption", "دانلود از اینستاگرام")
+    default_mode = await get_user_mode(update.effective_user.id, context)
+    
+    if len(items) == 1:
+        item = items[0]
+        if default_mode == "file":
+            await context.bot.send_document(
+                update.effective_chat.id, 
+                item["url"], 
+                caption=caption
+            )
+        else:
+            if item["type"] == "video":
+                await context.bot.send_video(
+                    update.effective_chat.id, 
+                    item["url"], 
+                    supports_streaming=True, 
+                    caption=caption
+                )
+            else:
+                await context.bot.send_photo(
+                    update.effective_chat.id, 
+                    item["url"], 
+                    caption=caption
+                )
+    else:
+        if default_mode == "album":
+            await send_media_group(update.effective_chat.id, context, items, caption)
+        else:
+            for i, item in enumerate(items):
+                await context.bot.send_document(
+                    update.effective_chat.id, 
+                    item["url"], 
+                    caption=caption if i == 0 else None
+                )
+                await asyncio.sleep(0.5)
 
 # ========== هندلر کالبک ==========
 
