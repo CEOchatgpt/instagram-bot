@@ -23,6 +23,9 @@ STORY_CHANNEL_ID = os.environ.get("STORY_CHANNEL_ID")          # استوری‌
 HIGHLIGHT_CHANNEL_ID = os.environ.get("HIGHLIGHT_CHANNEL_ID")  # هایلایت‌ها + لیست هایلایت‌ها
 USER_SETTING_CHANNEL_ID = os.environ.get("USER_SETTING_CHANNEL_ID")  # تنظیمات کاربر
 
+# برای سازگاری با کد قدیمی (اختیاری)
+MEDIA_CHANNEL_ID = POST_CHANNEL_ID
+
 # چک کردن متغیرهای ضروری
 if not BOT_TOKEN:
     raise ValueError("❌ متغیر BOT_TOKEN تنظیم نشده!")
