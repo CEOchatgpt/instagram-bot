@@ -1211,13 +1211,16 @@ async def post_init(application: Application):
     from index_manager import set_context, set_index_channel, sync_index_from_channel
     from config import INDEX_CHANNEL_ID
     
-    # تنظیم context
+    # تنظیم context - این بار از application.bot استفاده می‌کنیم
     set_context(application.bot)
     
     # تنظیم کانال ایندکس
     if INDEX_CHANNEL_ID:
         try:
             set_index_channel(int(INDEX_CHANNEL_ID))
+            
+            # کمی صبر می‌کنیم تا بات کاملاً آماده شود
+            await asyncio.sleep(1)
             
             # همگام‌سازی ایندکس از کانال (بعد از ریستارت)
             await sync_index_from_channel()
@@ -1226,7 +1229,6 @@ async def post_init(application: Application):
             logger.error(f"❌ خطا در همگام‌سازی ایندکس: {e}")
     else:
         logger.warning("⚠️ INDEX_CHANNEL_ID تنظیم نشده!")
-
 
 def main():
     """راه‌اندازی اصلی ربات"""
