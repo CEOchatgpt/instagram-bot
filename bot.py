@@ -337,9 +337,13 @@ async def stories_command(update: Update, context, username=None):
 async def show_settings_menu(update: Update, context, query=None):
     user_id = update.effective_user.id
     current_mode = await get_user_mode(user_id, context)
-    mode_text = "🎬 آلبوم ترکیبی" if current_mode == "album" else "📁 فایل (جداگانه)"
+    mode_text = "🎬 آلبوم ترکیبی" if current_mode == "album" else "📁 فایل جداگانه"
+    
     text = f"⚙️ <b>تنظیمات ارسال</b>\n\nحالت فعلی: {mode_text}\n\n📌 <b>توضیحات:</b>\n• آلبوم ترکیبی: چند رسانه در یک پیام\n• فایل جداگانه: هر رسانه به صورت جداگانه\n\n<i>🕐 آخرین بروزرسانی: {time.strftime('%H:%M:%S')}</i>"
-    keyboard = get_user_settings_keyboard(user_id)
+    
+    # استفاده از کیبورد با نمایش حالت فعال
+    from database import get_user_settings_keyboard_with_mode
+    keyboard = get_user_settings_keyboard_with_mode(current_mode)
     
     if query:
         try:
