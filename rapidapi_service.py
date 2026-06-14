@@ -26,6 +26,7 @@ _memory_cache = {}  # key -> {"data": data, "expires": timestamp}
 MEMORY_CACHE_TTL = 300  # 5 دقیقه
 
 
+
 def _get_memory_cache(key: str):
     """دریافت از کش حافظه"""
     if key in _memory_cache:
