@@ -1206,14 +1206,38 @@ async def check_bot_permissions(update: Update, context):
 
 # ========== main ==========
 
+async def post_init(application: Application):
+    """بعد از آماده شدن اپلیکیشن اجرا می‌شود"""
+    from index_manager import set_context, set_index_channel, sync_index_from_channel
+    from config import INDEX_CHANNEL_ID
+    
+    # تنظیم context
+    set_context(application.bot)
+    
+    # تنظیم کانال ایندکس
+    if INDEX_CHANNEL_ID:
+        try:
+            set_index_channel(int(INDEX_CHANNEL_ID))
+            
+            # همگام‌سازی ایندکس از کانال (بعد از ریستارت)
+            await sync_index_from_channel()
+            logger.info("✅ ایندکس از کانال همگام‌سازی شد")
+        except Exception as e:
+            logger.error(f"❌ خطا در همگام‌سازی ایندکس: {e}")
+    else:
+        logger.warning("⚠️ INDEX_CHANNEL_ID تنظیم نشده!")
+
+
 def main():
     """راه‌اندازی اصلی ربات"""
     
-    # مقداردهی اولیه دیتابیس
     init_db()
     
     # ساخت اپلیکیشن
     app = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
+    
+    # اضافه کردن post_init (بعد از آماده شدن اجرا می‌شود)
+    app.post_init = post_init
     
     # دستورات
     app.add_handler(CommandHandler("start", start))
