@@ -650,11 +650,7 @@ async def clear_cache_command(update: Update, context):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ شما دسترسی به این دستور ندارید.")
         return
-    from rapidapi_service import _memory_cache
-    _memory_cache.clear()
-    clear_memory_cache()
-    from database import _user_cache
-    _user_cache.clear()
+    
     await update.message.reply_text("✅ تمام کش‌های حافظه پاک شد.")
 
 
