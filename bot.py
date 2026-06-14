@@ -1170,6 +1170,39 @@ async def stats_command(update: Update, context):
     
     await update.message.reply_text(text, parse_mode='HTML')
 
+# دستور چک کردن دسترسی ربات در کانال‌ها
+async def check_bot_permissions(update: Update, context):
+    """چک کردن دسترسی ربات در کانال‌ها"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    channels = {
+        "PROFILE": PROFILE_CHANNEL_ID,
+        "MEDIA": MEDIA_CHANNEL_ID,
+        "REELS": REELS_LIST_CHANNEL_ID,
+        "HIGHLIGHTS": HIGHLIGHTS_LIST_CHANNEL_ID,
+        "SETTINGS": USER_SETTING_CHANNEL_ID,
+    }
+    
+    results = []
+    for name, channel_id in channels.items():
+        if not channel_id:
+            results.append(f"{name}: ⚠️ تنظیم نشده")
+            continue
+        
+        try:
+            # تلاش برای ارسال یک پیام تست
+            test_msg = await context.bot.send_message(
+                chat_id=channel_id,
+                text=f"🧪 تست دسترسی ربات در {name}",
+                disable_notification=True
+            )
+            await test_msg.delete()
+            results.append(f"{name}: ✅ دسترسی کامل")
+        except Exception as e:
+            results.append(f"{name}: ❌ خطا - {str(e)[:50]}")
+    
+    await update.message.reply_text("\n".join(results))
 
 # ========== main ==========
 
