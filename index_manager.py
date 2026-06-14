@@ -297,3 +297,147 @@ async def get_index_stats() -> Dict:
                 stats["newest"] = timestamp
     
     return stats
+
+
+# index_manager.py - اضافه کردن توابع جستجو
+
+async def search_index(
+    keyword: str = None,
+    content_type: str = None,
+    username: str = None,
+    days_back: int = None,
+    limit: int = 50
+) -> list:
+    """
+    جستجوی پیشرفته در ایندکس
+    
+    پارامترها:
+    - keyword: کلمه کلیدی برای جستجو در کلیدها و متادیتا
+    - content_type: نوع محتوا ('post', 'reel', 'story', 'highlight', 'profile')
+    - username: یوزرنیم برای فیلتر کردن
+    - days_back: تعداد روزهای گذشته
+    - limit: حداکثر تعداد نتایج
+    """
+    index = await asyncio.to_thread(_load_index_sync)
+    results = []
+    now = time.time()
+    
+    for key, value in index.items():
+        # فیلتر بر اساس نوع
+        if content_type and value.get('type') != content_type:
+            continue
+        
+        # فیلتر بر اساس تاریخ
+        if days_back:
+            timestamp = value.get('timestamp', 0)
+            if now - timestamp > days_back * 86400:
+                continue
+        
+        # فیلتر بر اساس یوزرنیم
+        if username:
+            metadata = value.get('metadata', {})
+            item_username = metadata.get('username') or metadata.get('original_key', '')
+            if username.lower() not in item_username.lower():
+                continue
+        
+        # جستجوی کلمه کلیدی
+        if keyword:
+            keyword_lower = keyword.lower()
+            match_found = (
+                keyword_lower in key.lower() or
+                keyword_lower in str(value.get('metadata', {})).lower()
+            )
+            if not match_found:
+                continue
+        
+        # اضافه کردن به نتایج
+        results.append({
+            'key': key,
+            'type': value.get('type'),
+            'message_id': value.get('message_id'),
+            'timestamp': value.get('timestamp'),
+            'metadata': value.get('metadata', {}),
+            'index_msg_id': value.get('index_msg_id')
+        })
+        
+        if len(results) >= limit:
+            break
+    
+    # مرتب‌سازی بر اساس زمان (جدیدترین اول)
+    results.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+    
+    return results
+
+
+async def search_by_username(username: str, limit: int = 50) -> list:
+    """جستجوی همه محتواهای یک یوزرنیم"""
+    return await search_index(username=username, limit=limit)
+
+
+async def search_by_type(content_type: str, limit: int = 100) -> list:
+    """جستجو بر اساس نوع محتوا"""
+    return await search_index(content_type=content_type, limit=limit)
+
+
+async def search_recent(days: int = 7, limit: int = 100) -> list:
+    """جستجوی محتواهای اخیر"""
+    return await search_index(days_back=days, limit=limit)
+
+
+async def search_media_id(media_id: str) -> dict:
+    """جستجو با شناسه مدیا (مثل DZLDbXgjNPj)"""
+    index = await asyncio.to_thread(_load_index_sync)
+    
+    for key, value in index.items():
+        if media_id in key:
+            return {
+                'key': key,
+                'type': value.get('type'),
+                'message_id': value.get('message_id'),
+                'metadata': value.get('metadata', {}),
+                'index_msg_id': value.get('index_msg_id')
+            }
+        
+        # چک کردن توی متادیتا
+        media_id_in_meta = value.get('metadata', {}).get('media_id')
+        if media_id_in_meta == media_id:
+            return {
+                'key': key,
+                'type': value.get('type'),
+                'message_id': value.get('message_id'),
+                'metadata': value.get('metadata', {}),
+                'index_msg_id': value.get('index_msg_id')
+            }
+    
+    return None
+
+
+async def get_index_statistics() -> Dict:
+    """آمار کامل ایندکس"""
+    index = await asyncio.to_thread(_load_index_sync)
+    
+    stats = {
+        'total': len(index),
+        'by_type': {},
+        'by_month': {},
+        'latest': None,
+        'oldest': None
+    }
+    
+    for key, value in index.items():
+        # آمار بر اساس نوع
+        data_type = value.get('type', 'unknown')
+        stats['by_type'][data_type] = stats['by_type'].get(data_type, 0) + 1
+        
+        # آمار بر اساس ماه
+        timestamp = value.get('timestamp')
+        if timestamp:
+            month = time.strftime('%Y-%m', time.localtime(timestamp))
+            stats['by_month'][month] = stats['by_month'].get(month, 0) + 1
+            
+            if not stats['latest'] or timestamp > stats['latest']:
+                stats['latest'] = timestamp
+            if not stats['oldest'] or timestamp < stats['oldest']:
+                stats['oldest'] = timestamp
+    
+    return stats
