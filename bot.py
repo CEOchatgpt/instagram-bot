@@ -1214,19 +1214,20 @@ async def check_bot_permissions(update: Update, context):
 async def post_init(application: Application):
     """
     این تابع بعد از آماده شدن اپلیکیشن و قبل از شروع polling اجرا می‌شود
-    اینجا کارهایی که نیاز به await دارند رو انجام می‌دیم
     """
     logger.info("🚀 در حال آماده‌سازی ربات...")
     
-    # تنظیم context برای index_manager
-    set_context(application.bot)
+    # IMPORTANT: application.bot رو مستقیم می‌فرستیم نه application رو
+    from index_manager import set_context, set_index_channel, sync_index_from_channel
+    from config import INDEX_CHANNEL_ID
     
-    # تنظیم کانال ایندکس (اگر تنظیم شده باشد)
+    # تنظیم context با خود بات (نه با application)
+    set_context(application.bot)  # ✅ اینجا بات رو می‌فرستیم
+    
+    # تنظیم کانال ایندکس
     if INDEX_CHANNEL_ID:
         try:
             set_index_channel(int(INDEX_CHANNEL_ID))
-            
-            # همگام‌سازی ایندکس از کانال (بعد از ریستارت)
             await sync_index_from_channel()
             logger.info("✅ ایندکس از کانال همگام‌سازی شد")
         except Exception as e:
@@ -1235,7 +1236,6 @@ async def post_init(application: Application):
         logger.warning("⚠️ INDEX_CHANNEL_ID تنظیم نشده! ایندکس فقط در فایل محلی ذخیره می‌شود")
     
     logger.info("✅ ربات آماده اجراست!")
-
 
 def main():
     """راه‌اندازی اصلی ربات - این تابع sync است (نه async)"""
