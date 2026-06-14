@@ -6,7 +6,13 @@ import time
 import asyncio
 from typing import Optional, Any, List, Dict
 from telegram.ext import ContextTypes
-from config import DATABASE_CHANNEL_ID
+from config import (
+    PROFILE_CHANNEL_ID,
+    MEDIA_CHANNEL_ID,
+    REELS_LIST_CHANNEL_ID,
+    HIGHLIGHTS_LIST_CHANNEL_ID,
+    USER_SETTING_CHANNEL_ID
+)
 from index_manager import (
     save_to_index, get_from_index, delete_from_index, 
     generate_storage_key, search_by_media_id
@@ -68,8 +74,8 @@ def _extract_media_id_from_key(media_key: str) -> Optional[str]:
 async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: str, profile_data: dict) -> Optional[int]:
     """ذخیره پروفایل به صورت readable در کانال"""
     
-    if not DATABASE_CHANNEL_ID:
-        logger.warning("⚠️ DATABASE_CHANNEL_ID تنظیم نشده!")
+    if not PROFILE_CHANNEL_ID:
+        logger.warning("⚠️ PROFILE_CHANNEL_ID تنظیم نشده!")
         return None
     
     try:
@@ -103,7 +109,7 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
         if profile_data.get("profile_pic"):
             try:
                 msg = await context.bot.send_photo(
-                    chat_id=DATABASE_CHANNEL_ID,
+                    chat_id=PROFILE_CHANNEL_ID,
                     photo=profile_data["profile_pic"],
                     caption=message_text,
                     parse_mode='HTML'
@@ -111,13 +117,13 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
             except Exception as e:
                 logger.warning(f"خطا در ارسال عکس: {e}")
                 msg = await context.bot.send_message(
-                    chat_id=DATABASE_CHANNEL_ID,
+                    chat_id=PROFILE_CHANNEL_ID,
                     text=message_text,
                     parse_mode='HTML'
                 )
         else:
             msg = await context.bot.send_message(
-                chat_id=DATABASE_CHANNEL_ID,
+                chat_id=PROFILE_CHANNEL_ID,
                 text=message_text,
                 parse_mode='HTML'
             )
@@ -147,7 +153,7 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
 async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username: str) -> Optional[dict]:
     """بازیابی پروفایل از کانال"""
     
-    if not DATABASE_CHANNEL_ID:
+    if not PROFILE_CHANNEL_ID:
         return None
     
     storage_key = generate_storage_key("profile", username)
@@ -172,8 +178,8 @@ async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username:
     try:
         # فوروارد پیام به خودش برای گرفتن محتوا
         msg = await context.bot.forward_message(
-            chat_id=DATABASE_CHANNEL_ID,
-            from_chat_id=DATABASE_CHANNEL_ID,
+            chat_id=PROFILE_CHANNEL_ID,
+            from_chat_id=PROFILE_CHANNEL_ID,
             message_id=message_id
         )
         
@@ -233,8 +239,8 @@ async def save_media_with_key(context: ContextTypes.DEFAULT_TYPE, storage_key: s
     """
     ذخیره مدیا با کلید مشخص (برای اطمینان از یکسان بودن کلید در ذخیره و بازیابی)
     """
-    if not DATABASE_CHANNEL_ID:
-        logger.warning("⚠️ DATABASE_CHANNEL_ID تنظیم نشده!")
+    if not MEDIA_CHANNEL_ID:
+        logger.warning("⚠️ MEDIA_CHANNEL_ID تنظیم نشده!")
         return None
     
     try:
@@ -269,7 +275,7 @@ async def save_media_with_key(context: ContextTypes.DEFAULT_TYPE, storage_key: s
             try:
                 if item_type == "video":
                     msg = await context.bot.send_video(
-                        chat_id=DATABASE_CHANNEL_ID,
+                        chat_id=MEDIA_CHANNEL_ID,
                         video=item_url,
                         caption=item_caption[:1024],
                         parse_mode='HTML',
@@ -277,7 +283,7 @@ async def save_media_with_key(context: ContextTypes.DEFAULT_TYPE, storage_key: s
                     )
                 else:
                     msg = await context.bot.send_photo(
-                        chat_id=DATABASE_CHANNEL_ID,
+                        chat_id=MEDIA_CHANNEL_ID,
                         photo=item_url,
                         caption=item_caption[:1024],
                         parse_mode='HTML'
@@ -290,7 +296,7 @@ async def save_media_with_key(context: ContextTypes.DEFAULT_TYPE, storage_key: s
                 logger.warning(f"خطا در ارسال آیتم {idx}: {e}")
                 try:
                     msg = await context.bot.send_document(
-                        chat_id=DATABASE_CHANNEL_ID,
+                        chat_id=MEDIA_CHANNEL_ID,
                         document=item_url,
                         caption=item_caption[:900],
                         parse_mode='HTML'
@@ -351,7 +357,7 @@ async def get_media_by_key(context: ContextTypes.DEFAULT_TYPE, storage_key: str)
     """
     بازیابی مدیا با کلید مستقیم (بدون نیاز به ساخت مجدد کلید)
     """
-    if not DATABASE_CHANNEL_ID:
+    if not MEDIA_CHANNEL_ID:
         return None
     
     cache_key = f"media:{storage_key}"
@@ -386,8 +392,8 @@ async def get_media_by_key(context: ContextTypes.DEFAULT_TYPE, storage_key: str)
     for msg_id in message_ids[:10]:
         try:
             msg = await context.bot.forward_message(
-                chat_id=DATABASE_CHANNEL_ID,
-                from_chat_id=DATABASE_CHANNEL_ID,
+                chat_id=MEDIA_CHANNEL_ID,
+                from_chat_id=MEDIA_CHANNEL_ID,
                 message_id=msg_id
             )
             
@@ -441,7 +447,7 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
 async def save_reels_list_to_channel(context: ContextTypes.DEFAULT_TYPE, username: str, reels_data: dict) -> Optional[int]:
     """ذخیره لیست ریل‌ها"""
     
-    if not DATABASE_CHANNEL_ID:
+    if not REELS_LIST_CHANNEL_ID:
         return None
     
     try:
@@ -473,7 +479,7 @@ async def save_reels_list_to_channel(context: ContextTypes.DEFAULT_TYPE, usernam
         message_lines.append(f"💾 {time.strftime('%Y/%m/%d %H:%M:%S')}")
         
         msg = await context.bot.send_message(
-            chat_id=DATABASE_CHANNEL_ID,
+            chat_id=REELS_LIST_CHANNEL_ID,
             text="\n".join(message_lines),
             parse_mode='HTML'
         )
@@ -515,7 +521,7 @@ async def get_reels_list_from_channel(context: ContextTypes.DEFAULT_TYPE, userna
 async def save_highlights_list_to_channel(context: ContextTypes.DEFAULT_TYPE, username: str, highlights: list) -> Optional[int]:
     """ذخیره لیست هایلایت‌ها"""
     
-    if not DATABASE_CHANNEL_ID:
+    if not HIGHLIGHTS_LIST_CHANNEL_ID:
         return None
     
     try:
@@ -546,7 +552,7 @@ async def save_highlights_list_to_channel(context: ContextTypes.DEFAULT_TYPE, us
         message_lines.append(f"💾 {time.strftime('%Y/%m/%d %H:%M:%S')}")
         
         msg = await context.bot.send_message(
-            chat_id=DATABASE_CHANNEL_ID,
+            chat_id=HIGHLIGHT_CHANNEL_ID,
             text="\n".join(message_lines),
             parse_mode='HTML'
         )
@@ -589,7 +595,7 @@ async def get_highlights_list_from_channel(context: ContextTypes.DEFAULT_TYPE, u
 async def save_user_setting_to_channel(context: ContextTypes.DEFAULT_TYPE, user_id: int, mode: str) -> Optional[int]:
     """ذخیره تنظیمات کاربر در کانال"""
     
-    if not DATABASE_CHANNEL_ID:
+    if not USER_SETTING_CHANNEL_ID:
         return None
     
     try:
@@ -611,14 +617,14 @@ async def save_user_setting_to_channel(context: ContextTypes.DEFAULT_TYPE, user_
         if existing:
             try:
                 await context.bot.delete_message(
-                    chat_id=DATABASE_CHANNEL_ID,
+                    chat_id=USER_SETTING_CHANNEL_ID,
                     message_id=existing["message_id"]
                 )
             except:
                 pass
         
         msg = await context.bot.send_message(
-            chat_id=DATABASE_CHANNEL_ID,
+            chat_id=USER_SETTING_CHANNEL_ID,
             text=message_text,
             parse_mode='HTML'
         )
@@ -642,7 +648,7 @@ async def save_user_setting_to_channel(context: ContextTypes.DEFAULT_TYPE, user_
 async def get_user_setting_from_channel(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> Optional[str]:
     """بازیابی تنظیمات کاربر از کانال"""
     
-    if not DATABASE_CHANNEL_ID:
+    if not USER_SETTING_CHANNEL_ID:
         return None
     
     storage_key = generate_storage_key("user_setting", str(user_id))
@@ -657,8 +663,8 @@ async def get_user_setting_from_channel(context: ContextTypes.DEFAULT_TYPE, user
     
     try:
         msg = await context.bot.forward_message(
-            chat_id=DATABASE_CHANNEL_ID,
-            from_chat_id=DATABASE_CHANNEL_ID,
+            chat_id=USER_SETTING_CHANNEL_ID,
+            from_chat_id=USER_SETTING_CHANNEL_ID,
             message_id=message_id
         )
         
@@ -677,30 +683,6 @@ async def get_user_setting_from_channel(context: ContextTypes.DEFAULT_TYPE, user
 
 
 # ========== توابع کمکی ==========
-
-async def delete_from_channel(context: ContextTypes.DEFAULT_TYPE, storage_key: str) -> bool:
-    """حذف یک محتوا از کانال و ایندکس"""
-    
-    index_data = await get_from_index(storage_key)
-    if not index_data:
-        return False
-    
-    try:
-        message_id = index_data.get("message_id")
-        if message_id:
-            await context.bot.delete_message(
-                chat_id=DATABASE_CHANNEL_ID,
-                message_id=message_id
-            )
-        
-        await delete_from_index(storage_key)
-        logger.info(f"🗑️ حذف شد: {storage_key}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ خطا در حذف: {e}")
-        return False
-
 
 def clear_memory_cache():
     """پاک کردن کش حافظه"""
