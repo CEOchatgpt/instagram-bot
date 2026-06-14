@@ -31,3 +31,9 @@ DATABASE_CHANNEL_ID = os.environ.get("DATABASE_CHANNEL_ID")  # مثال: -100123
 if not DATABASE_CHANNEL_ID:
     print("⚠️ هشدار: DATABASE_CHANNEL_ID تنظیم نشده! کش دائمی غیرفعال است.")
 
+
+PROFILE_CHANNEL_ID = os.environ.get("PROFILE_CHANNEL_ID")      # برای پروفایل
+MEDIA_CHANNEL_ID = os.environ.get("MEDIA_CHANNEL_ID")          # برای مدیا (پست، ریل، استوری، هایلایت)
+REELS_LIST_CHANNEL_ID = os.environ.get("REELS_LIST_CHANNEL_ID") # برای لیست ریل‌ها
+HIGHLIGHTS_LIST_CHANNEL_ID = os.environ.get("HIGHLIGHTS_LIST_CHANNEL_ID") # برای لیست هایلایت‌ها
+USER_SETTING_CHANNEL_ID = os.environ.get("USER_SETTING_CHANNEL_ID") # برای تنظیمات کاربر
