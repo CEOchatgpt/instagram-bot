@@ -1,4 +1,4 @@
-# index_manager.py - نسخه قدرتمند با جستجوی فوق‌سریع
+# index_manager.py - نسخه تمیز بدون کش حافظه
 
 import json
 import os
@@ -13,13 +13,7 @@ logger = logging.getLogger(__name__)
 
 # فایل‌های محلی
 INDEX_FILE = "channel_index.json"
-INDEX_META_FILE = "index_meta.json"
-SEARCH_INDEX_FILE = "search_index.json"  # ایندکس جستجوی سریع
-
-_index_cache = None
-_search_index_cache = None  # کش ایندکس جستجو
-_cache_time = 0
-CACHE_TTL = 3600  # 1 ساعت (افزایش یافت)
+SEARCH_INDEX_FILE = "search_index.json"
 
 _write_lock = asyncio.Lock()
 
@@ -46,10 +40,10 @@ class SearchIndex:
     """ایندکس جستجوی سریع با چند لایه"""
     
     def __init__(self):
-        self.by_keyword = defaultdict(list)  # کلمه کلیدی -> لیست کلیدها
-        self.by_type = defaultdict(list)     # نوع -> لیست کلیدها
-        self.by_username = defaultdict(list) # یوزرنیم -> لیست کلیدها
-        self.by_media_id = {}                # media_id -> کلید کامل
+        self.by_keyword = defaultdict(list)
+        self.by_type = defaultdict(list)
+        self.by_username = defaultdict(list)
+        self.by_media_id = {}
         self.last_updated = 0
     
     def rebuild_from_index(self, index: Dict):
@@ -60,61 +54,48 @@ class SearchIndex:
         self.by_media_id.clear()
         
         for key, value in index.items():
-            # ایندکس بر اساس نوع
             data_type = value.get('type', 'unknown')
             self.by_type[data_type].append(key)
             
-            # ایندکس بر اساس کلمات کلیدی در کلید
             keywords = re.findall(r'[a-zA-Z0-9_-]+', key)
             for kw in keywords:
-                if len(kw) > 3:  # فقط کلمات با طول بیشتر از 3
+                if len(kw) > 3:
                     self.by_keyword[kw.lower()].append(key)
             
-            # ایندکس بر اساس متادیتا
             metadata = value.get('metadata', {})
             if metadata.get('username'):
-                username = metadata['username'].lower()
-                self.by_username[username].append(key)
+                self.by_username[metadata['username'].lower()].append(key)
             
-            # ایندکس بر اساس media_id
             if metadata.get('media_id'):
                 self.by_media_id[metadata['media_id']] = key
             
-            # از کلید هم media_id استخراج کن
             if ':' in key:
                 possible_id = key.split(':')[-1]
                 if len(possible_id) >= 8:
                     self.by_media_id[possible_id] = key
         
         self.last_updated = time.time()
-        logger.info(f"🔍 ایندکس جستجو بازسازی شد: {sum(len(v) for v in self.by_keyword.values())} عبارت کلیدی")
+        logger.info(f"🔍 ایندکس جستجو بازسازی شد")
     
     def search(self, keyword: str = None, content_type: str = None, 
                username: str = None, media_id: str = None, limit: int = 50) -> List[str]:
-        """جستجوی سریع و برگرداندن لیست کلیدها"""
         results = set()
         
-        # جستجو با media_id (سریع‌ترین)
-        if media_id:
-            if media_id in self.by_media_id:
-                return [self.by_media_id[media_id]]
-            return []
+        if media_id and media_id in self.by_media_id:
+            return [self.by_media_id[media_id]]
         
-        # جستجو با username
         if username:
             username_lower = username.lower()
             for uname, keys in self.by_username.items():
                 if username_lower in uname:
                     results.update(keys)
         
-        # جستجو با keyword
         if keyword:
             keyword_lower = keyword.lower()
             for kw, keys in self.by_keyword.items():
                 if keyword_lower in kw or kw in keyword_lower:
                     results.update(keys)
         
-        # فیلتر بر اساس نوع
         if content_type and content_type in self.by_type:
             if results:
                 results = results.intersection(self.by_type[content_type])
@@ -124,7 +105,6 @@ class SearchIndex:
         return list(results)[:limit]
     
     def get_stats(self) -> Dict:
-        """آمار ایندکس جستجو"""
         return {
             'total_keywords': len(self.by_keyword),
             'total_types': len(self.by_type),
@@ -138,7 +118,6 @@ _search_index = SearchIndex()
 
 def _save_search_index_sync():
     """ذخیره ایندکس جستجو در فایل"""
-    global _search_index
     try:
         data = {
             'by_keyword': dict(_search_index.by_keyword),
@@ -149,7 +128,6 @@ def _save_search_index_sync():
         }
         with open(SEARCH_INDEX_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
-        logger.debug(f"💾 ایندکس جستجو ذخیره شد")
     except Exception as e:
         logger.warning(f"خطا در ذخیره ایندکس جستجو: {e}")
 
@@ -174,17 +152,14 @@ def _load_search_index_sync():
     return False
 
 
-# ========== توابع کانال ایندکس (هر آیتم یک پیام جدا) ==========
+# ========== توابع کانال ایندکس ==========
 
 async def _save_single_index_to_channel(key: str, data: Dict) -> Optional[int]:
     """ذخیره یک آیتم ایندکس به صورت پیام جداگانه"""
-    global INDEX_CHANNEL_ID, _context
-    
     if not INDEX_CHANNEL_ID or not _context:
         return None
     
     try:
-        # ساخت پیام زیبا برای این کلید
         message_text = f"""📌 **ایندکس: `{key}`**
 ━━━━━━━━━━━━━━━━
 📁 **نوع:** `{data.get('type', 'unknown')}`
@@ -196,7 +171,6 @@ async def _save_single_index_to_channel(key: str, data: Dict) -> Optional[int]:
 {json.dumps(data.get('metadata', {}), ensure_ascii=False, indent=2)[:800]}
 ```"""
         
-        # اگر index_msg_id قبلاً ذخیره شده، آپدیت کن
         if data.get('index_msg_id'):
             try:
                 await _context.edit_message_text(
@@ -207,9 +181,8 @@ async def _save_single_index_to_channel(key: str, data: Dict) -> Optional[int]:
                 )
                 return data['index_msg_id']
             except Exception as e:
-                logger.warning(f"خطا در آپدیت پیام ایندکس: {e}")
+                logger.warning(f"خطا در آپدیت: {e}")
         
-        # ارسال پیام جدید
         msg = await _context.send_message(
             chat_id=INDEX_CHANNEL_ID,
             text=message_text,
@@ -223,51 +196,15 @@ async def _save_single_index_to_channel(key: str, data: Dict) -> Optional[int]:
         return None
 
 
-async def _save_index_to_channel(index: Dict):
-    """ذخیره کل ایندکس در کانال (برای بکاپ) - نگهداری برای سازگاری"""
-    # در روش جدید هر آیتم جداگانه ذخیره می‌شود
-    # این تابع فقط برای بکاپ کلی استفاده می‌شود
-    pass
-
-
-async def _load_index_from_channel() -> Optional[Dict]:
-    """بارگذاری ایندکس از کانال با اسکن پیام‌ها"""
-    global INDEX_CHANNEL_ID, _context
-    
-    if not INDEX_CHANNEL_ID or not _context:
-        return None
-    
-    try:
-        index = {}
-        
-        # دریافت تاریخچه پیام‌های کانال ایندکس (اختیاری)
-        # در عمل، ما از فایل محلی استفاده می‌کنیم و کانال فقط برای بکاپ است
-        
-        return index if index else None
-        
-    except Exception as e:
-        logger.error(f"❌ خطا در بارگذاری از کانال: {e}")
-        return None
-
-
 # ========== توابع اصلی ایندکس ==========
 
 def _load_index_sync() -> Dict:
     """بارگذاری از فایل محلی"""
-    global _index_cache, _cache_time
-    
-    if _index_cache is not None and (time.time() - _cache_time) < CACHE_TTL:
-        return _index_cache
-    
     try:
         if os.path.exists(INDEX_FILE):
             with open(INDEX_FILE, 'r', encoding='utf-8') as f:
-                _index_cache = json.load(f)
-                _cache_time = time.time()
-                return _index_cache
-        else:
-            _index_cache = {}
-            return _index_cache
+                return json.load(f)
+        return {}
     except Exception as e:
         logger.error(f"خطا در بارگذاری فایل: {e}")
         return {}
@@ -275,16 +212,10 @@ def _load_index_sync() -> Dict:
 
 def _save_index_sync(index: Dict):
     """ذخیره در فایل محلی"""
-    global _index_cache, _cache_time
-    
     try:
         with open(INDEX_FILE, 'w', encoding='utf-8') as f:
             json.dump(index, f, ensure_ascii=False, indent=2)
         
-        _index_cache = index
-        _cache_time = time.time()
-        
-        # بازسازی ایندکس جستجو
         _search_index.rebuild_from_index(index)
         _save_search_index_sync()
         
@@ -293,7 +224,7 @@ def _save_index_sync(index: Dict):
 
 
 async def save_to_index(key: str, message_id: int, data_type: str, metadata: Dict = None):
-    """ذخیره در ایندکس - هر آیتم یک پیام جداگانه در کانال"""
+    """ذخیره در ایندکس"""
     async with _write_lock:
         index = await asyncio.to_thread(_load_index_sync)
         
@@ -305,20 +236,15 @@ async def save_to_index(key: str, message_id: int, data_type: str, metadata: Dic
             "metadata": metadata or {}
         }
         
-        # حفظ index_msg_id قبلی اگر وجود دارد
         if existing.get('index_msg_id'):
             new_data['index_msg_id'] = existing['index_msg_id']
         
-        # ذخیره در کانال ایندکس (هر آیتم جداگانه)
         index_msg_id = await _save_single_index_to_channel(key, new_data)
         if index_msg_id:
             new_data['index_msg_id'] = index_msg_id
         
         index[key] = new_data
-        
-        # ذخیره در فایل محلی
         await asyncio.to_thread(_save_index_sync, index)
-        
         logger.info(f"📝 {key} -> msg_id: {message_id}")
 
 
@@ -334,7 +260,6 @@ async def delete_from_index(key: str) -> bool:
         index = await asyncio.to_thread(_load_index_sync)
         
         if key in index:
-            # حذف پیام از کانال ایندکس اگر وجود دارد
             index_msg_id = index[key].get('index_msg_id')
             if index_msg_id and _context and INDEX_CHANNEL_ID:
                 try:
@@ -359,16 +284,11 @@ async def search_index(
     media_id: str = None,
     limit: int = 50
 ) -> List[Dict]:
-    """
-    جستجوی فوق‌سریع در ایندکس
-    برگرداندن لیست آیتم‌های کامل
-    """
-    # اطمینان از بارگذاری ایندکس جستجو
+    """جستجوی سریع در ایندکس"""
     index = await asyncio.to_thread(_load_index_sync)
     if not _search_index.by_keyword and index:
         await asyncio.to_thread(_search_index.rebuild_from_index, index)
     
-    # جستجو با استفاده از ایندکس سریع
     keys = await asyncio.to_thread(
         _search_index.search,
         keyword=keyword,
@@ -378,23 +298,21 @@ async def search_index(
         limit=limit
     )
     
-    # برگرداندن آیتم‌های کامل
     results = []
     for key in keys:
         if key in index:
             results.append(index[key])
-    
     return results
 
 
 async def search_by_media_id(media_id: str) -> Optional[Dict]:
-    """جستجوی سریع با شناسه مدیا"""
+    """جستجو با شناسه مدیا"""
     results = await search_index(media_id=media_id, limit=1)
     return results[0] if results else None
 
 
 async def search_by_username(username: str, limit: int = 50) -> List[Dict]:
-    """جستجوی همه محتواهای یک یوزرنیم"""
+    """جستجوی محتواهای یک یوزرنیم"""
     return await search_index(username=username, limit=limit)
 
 
@@ -403,23 +321,19 @@ async def search_by_type(content_type: str, limit: int = 100) -> List[Dict]:
     return await search_index(content_type=content_type, limit=limit)
 
 
+async def search_by_keyword(keyword: str) -> List[Dict]:
+    """جستجو با کلمه کلیدی"""
+    return await search_index(keyword=keyword)
+
+
 async def sync_index_from_channel():
-    """همگام‌سازی از کانال (بعد از ریستارت)"""
-    # در روش جدید، از فایل محلی استفاده می‌کنیم
-    # کانال فقط برای بکاپ است
+    """همگام‌سازی از فایل محلی"""
     index = await asyncio.to_thread(_load_index_sync)
     if index:
-        logger.info(f"🔄 ایندکس از فایل محلی بارگذاری شد - {len(index)} آیتم")
+        logger.info(f"🔄 ایندکس بارگذاری شد - {len(index)} آیتم")
         return True
     
-    # اگر فایل محلی خالی بود، از کانال تلاش کن
-    index = await _load_index_from_channel()
-    if index:
-        await asyncio.to_thread(_save_index_sync, index)
-        logger.info(f"🔄 ایندکس از کانال همگام‌سازی شد - {len(index)} آیتم")
-        return True
-    
-    logger.warning("⚠️ همگام‌سازی ناموفق - ایندکس خالی است")
+    logger.warning("⚠️ ایندکس خالی است")
     return False
 
 
@@ -446,7 +360,7 @@ async def get_index_stats() -> Dict:
         "newest": None
     }
     
-    for key, value in index.items():
+    for value in index.values():
         data_type = value.get("type", "unknown")
         stats["by_type"][data_type] = stats["by_type"].get(data_type, 0) + 1
         
@@ -461,11 +375,5 @@ async def get_index_stats() -> Dict:
 
 
 async def get_all_keys() -> List[str]:
-    """دریافت همه کلیدها"""
     index = await asyncio.to_thread(_load_index_sync)
     return list(index.keys())
-
-
-async def search_by_keyword(keyword: str) -> List[Dict]:
-    """جستجو با کلمه کلیدی در کلیدها"""
-    return await search_index(keyword=keyword)
