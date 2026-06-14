@@ -22,6 +22,7 @@ REEL_CHANNEL_ID = os.environ.get("REEL_CHANNEL_ID")            # ریل‌ها +
 STORY_CHANNEL_ID = os.environ.get("STORY_CHANNEL_ID")          # استوری‌ها
 HIGHLIGHT_CHANNEL_ID = os.environ.get("HIGHLIGHT_CHANNEL_ID")  # هایلایت‌ها + لیست هایلایت‌ها
 USER_SETTING_CHANNEL_ID = os.environ.get("USER_SETTING_CHANNEL_ID")  # تنظیمات کاربر
+INDEX_CHANNEL_ID = os.environ.get("INDEX_CHANNEL_ID")
 
 # برای سازگاری با کد قدیمی (اختیاری)
 MEDIA_CHANNEL_ID = POST_CHANNEL_ID
