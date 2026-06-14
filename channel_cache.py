@@ -1,10 +1,10 @@
-# channel_cache.py - نسخه تمیز و بهینه
+# channel_cache.py - نسخه بدون کش حافظه (فقط کانال تلگرام)
 
 import logging
 import hashlib
 import time
 import asyncio
-from typing import Optional, Any, Dict, List
+from typing import Optional, Dict, List
 from telegram.ext import ContextTypes
 from config import (
     PROFILE_CHANNEL_ID,
@@ -17,23 +17,6 @@ from config import (
 from index_manager import save_to_index, get_from_index, generate_storage_key
 
 logger = logging.getLogger(__name__)
-
-# کش حافظه
-_memory_cache: Dict[str, dict] = {}
-CACHE_TTL = 300
-
-
-def _get_memory_cache(key: str) -> Optional[Any]:
-    if key in _memory_cache:
-        item = _memory_cache[key]
-        if time.time() < item["expires"]:
-            return item["data"]
-        del _memory_cache[key]
-    return None
-
-
-def _set_memory_cache(key: str, data: Any, ttl: int = CACHE_TTL):
-    _memory_cache[key] = {"data": data, "expires": time.time() + ttl}
 
 
 def _format_caption(caption: str, max_len: int = 300) -> str:
@@ -103,7 +86,6 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
         
         if msg:
             await save_to_index(storage_key, msg.message_id, "profile", {"username": username, "full_name": profile_data.get("full_name", "")})
-            _set_memory_cache(f"profile:{username}", {"data": profile_data}, ttl=86400)
             logger.info(f"✅ پروفایل {username} ذخیره شد")
             return msg.message_id
         return None
@@ -118,25 +100,30 @@ async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username:
         return None
     
     storage_key = generate_storage_key("profile", username)
-    cache_key = f"profile:{username}"
-    
-    cached = _get_memory_cache(cache_key)
-    if cached:
-        return cached.get("data")
-    
     index_data = await get_from_index(storage_key)
     if not index_data:
         return None
     
-    msg = await context.bot.forward_message(chat_id=channel_id, from_chat_id=channel_id, message_id=index_data["message_id"])
-    
-    profile_data = {
-        "username": username, "full_name": username, "biography": "", "followers": 0,
-        "following": 0, "posts": 0, "profile_pic": msg.photo[-1].file_id if msg.photo else None,
-        "is_private": False, "is_verified": False, "from_channel_cache": True
-    }
-    _set_memory_cache(cache_key, {"data": profile_data}, ttl=86400)
-    return profile_data
+    try:
+        msg = await context.bot.forward_message(chat_id=channel_id, from_chat_id=channel_id, message_id=index_data["message_id"])
+        
+        profile_data = {
+            "username": username,
+            "full_name": username,
+            "biography": "",
+            "followers": 0,
+            "following": 0,
+            "posts": 0,
+            "profile_pic": msg.photo[-1].file_id if msg.photo else None,
+            "is_private": False,
+            "is_verified": False,
+            "from_channel_cache": True
+        }
+        logger.info(f"✅ پروفایل {username} از کانال بازیابی شد")
+        return profile_data
+    except Exception as e:
+        logger.error(f"❌ خطا در بازیابی پروفایل: {e}")
+        return None
 
 
 # ========== ذخیره مدیا ==========
@@ -200,7 +187,6 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
         
         if message_ids:
             await save_to_index(storage_key, message_ids[0], content_type, {"original_key": media_key, "item_count": len(message_ids), "message_ids": message_ids})
-            _set_memory_cache(f"{content_type}:{storage_key}", {"message_ids": message_ids, "data": media_data}, ttl=86400)
             logger.info(f"✅ {len(message_ids)} {type_info[1]} در کانال {content_type} ذخیره شد")
             return message_ids[0]
         return None
@@ -235,7 +221,6 @@ async def save_reels_list_to_channel(context: ContextTypes.DEFAULT_TYPE, usernam
         
         if msg:
             await save_to_index(storage_key, msg.message_id, "reels_list", {"username": username, "reels_count": len(items)})
-            _set_memory_cache(f"reels_list:{username}", {"data": reels_data}, ttl=86400)
             for idx, item in enumerate(items):
                 reel_data = {"caption": item.get("caption", ""), "items": [{"type": "video", "url": item.get("url")}]}
                 await save_media_to_channel(context, f"reel:{username}:{item.get('id', idx)}", reel_data, 'reel')
@@ -247,8 +232,11 @@ async def save_reels_list_to_channel(context: ContextTypes.DEFAULT_TYPE, usernam
 
 
 async def get_reels_list_from_channel(context: ContextTypes.DEFAULT_TYPE, username: str) -> Optional[dict]:
-    cached = _get_memory_cache(f"reels_list:{username}")
-    return cached.get("data") if cached else None
+    storage_key = generate_storage_key("reels_list", username)
+    index_data = await get_from_index(storage_key)
+    if index_data:
+        return {"items": []}
+    return None
 
 
 # ========== لیست هایلایت‌ها ==========
@@ -276,7 +264,6 @@ async def save_highlights_list_to_channel(context: ContextTypes.DEFAULT_TYPE, us
         
         if msg:
             await save_to_index(storage_key, msg.message_id, "highlights_list", {"username": username, "highlights_count": len(highlights)})
-            _set_memory_cache(f"highlights_list:{username}", {"data": highlights}, ttl=86400)
             return msg.message_id
         return None
     except Exception as e:
@@ -285,10 +272,6 @@ async def save_highlights_list_to_channel(context: ContextTypes.DEFAULT_TYPE, us
 
 
 async def get_highlights_list_from_channel(context: ContextTypes.DEFAULT_TYPE, username: str) -> Optional[list]:
-    cached = _get_memory_cache(f"highlights_list:{username}")
-    if cached:
-        return cached.get("data")
-    
     storage_key = generate_storage_key("highlights_list", username)
     index_data = await get_from_index(storage_key)
     if index_data:
@@ -358,11 +341,6 @@ async def get_media_by_key(context: ContextTypes.DEFAULT_TYPE, storage_key: str)
     if not channel_id:
         return None
     
-    cache_key = f"{content_type}:{storage_key}"
-    cached = _get_memory_cache(cache_key)
-    if cached:
-        return cached.get("data")
-    
     index_data = await get_from_index(storage_key)
     if not index_data:
         return None
@@ -395,9 +373,7 @@ async def get_media_by_key(context: ContextTypes.DEFAULT_TYPE, storage_key: str)
             logger.warning(f"خطا در بازیابی پیام {msg_id}: {e}")
     
     if items:
-        result = {"caption": caption, "items": items}
-        _set_memory_cache(cache_key, {"data": result}, ttl=86400)
-        return result
+        return {"caption": caption, "items": items}
     return None
 
 
@@ -412,6 +388,5 @@ async def get_media_from_channel(context: ContextTypes.DEFAULT_TYPE, media_key: 
 
 
 def clear_memory_cache():
-    global _memory_cache
-    _memory_cache.clear()
-    logger.info("🧹 کش حافظه پاک شد")
+    """برای سازگاری با کد قدیمی - الان کاری نمی‌کنه"""
+    logger.info("🧹 کش حافظه (غیرفعال است)")
