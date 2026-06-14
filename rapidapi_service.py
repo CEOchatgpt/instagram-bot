@@ -81,11 +81,10 @@ def _detect_content_type(url: str) -> str:
     else:
         return 'post'
 
-
-# ========== پروفایل ==========
+# ========== پروفایل (فقط اسم، یوزرنیم، عکس) ==========
 
 async def get_instagram_profile(username: str, context=None):
-    """دریافت پروفایل - فقط کانال تلگرام"""
+    """دریافت پروفایل - فقط اسم، یوزرنیم و عکس (بدون آمار و بیو)"""
     
     # کانال تلگرام
     if context:
@@ -97,8 +96,8 @@ async def get_instagram_profile(username: str, context=None):
         except Exception as e:
             logger.warning(f"خطا در خواندن از کانال دیتابیس: {e}")
     
-    # API
-    logger.info(f"🌐 پروفایل {username} در کانال نبود - ارسال درخواست به API")
+    # API (فقط اطلاعات ضروری)
+    logger.info(f"🌐 دریافت اطلاعات پایه پروفایل {username} از API")
     
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -122,16 +121,11 @@ async def get_instagram_profile(username: str, context=None):
                 if not user_data:
                     return None
                 
+                # فقط اطلاعات ضروری
                 profile = {
                     "username": user_data.get("username") or username,
                     "full_name": user_data.get("full_name") or username,
-                    "biography": user_data.get("biography") or "بدون بیو",
-                    "followers": user_data.get("follower_count", 0),
-                    "following": user_data.get("following_count", 0),
-                    "posts": user_data.get("media_count", 0),
                     "profile_pic": user_data.get("hd_profile_pic_url_info", {}).get("url") or user_data.get("profile_pic_url"),
-                    "is_private": user_data.get("is_private", False),
-                    "is_verified": user_data.get("is_verified", False),
                 }
                 
                 if context:
@@ -142,8 +136,7 @@ async def get_instagram_profile(username: str, context=None):
     except Exception as e:
         logger.error(f"Error in get_instagram_profile: {e}")
         return None
-
-
+        
 # ========== مدیا (پست، ریلز، استوری، هایلایت) ==========
 
 async def get_instagram_media(post_url: str, context=None) -> dict | None:
