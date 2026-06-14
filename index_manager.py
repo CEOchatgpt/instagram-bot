@@ -1,4 +1,4 @@
-# index_manager.py - نسخه نهایی ساده با ذخیره در فایل
+# index_manager.py - اصلاح توابع ارسال به کانال
 
 import json
 import os
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # فایل‌های محلی
 INDEX_FILE = "channel_index.json"
-INDEX_META_FILE = "index_meta.json"  # فقط برای ذخیره message_id
+INDEX_META_FILE = "index_meta.json"
 
 _index_cache = None
 _cache_time = 0
@@ -19,14 +19,16 @@ CACHE_TTL = 60
 
 _write_lock = asyncio.Lock()
 
-# برای کانال تلگرام
+# برای ذخیره در کانال تلگرام
 INDEX_CHANNEL_ID = None
-_context = None
+_context = None  # این باید Bot باشد نه User
 
 
 def set_context(context):
+    """تنظیم context برای دسترسی به بات"""
     global _context
     _context = context
+    logger.info(f"📡 Context تنظیم شد: {type(context)}")
 
 
 def set_index_channel(channel_id: int):
@@ -76,7 +78,8 @@ async def _save_index_to_channel(index: Dict):
         
         if msg_id:
             try:
-                await _context.bot.edit_message_text(
+                # اصلاح: استفاده از _context مستقیم (که باید Bot باشد)
+                await _context.edit_message_text(
                     chat_id=INDEX_CHANNEL_ID,
                     message_id=msg_id,
                     text=message_text,
@@ -85,11 +88,11 @@ async def _save_index_to_channel(index: Dict):
                 logger.info(f"✅ ایندکس آپدیت شد (msg_id: {msg_id})")
                 return True
             except Exception as e:
-                logger.warning(f"خطا در آپدیت: {e} - ارسال جدید")
+                logger.warning(f"خطا در آپدیت: {e}")
                 msg_id = None
         
         # ارسال پیام جدید
-        msg = await _context.bot.send_message(
+        msg = await _context.send_message(
             chat_id=INDEX_CHANNEL_ID,
             text=message_text,
             parse_mode='Markdown'
@@ -117,7 +120,7 @@ async def _load_index_from_channel() -> Optional[Dict]:
             return None
         
         # دریافت پیام با فوروارد کردن
-        msg = await _context.bot.forward_message(
+        msg = await _context.forward_message(
             chat_id=INDEX_CHANNEL_ID,
             from_chat_id=INDEX_CHANNEL_ID,
             message_id=msg_id
@@ -197,8 +200,11 @@ async def save_to_index(key: str, message_id: int, data_type: str, metadata: Dic
         # ذخیره در فایل محلی
         await asyncio.to_thread(_save_index_sync, index)
         
-        # ذخیره در کانال تلگرام (اختیاری)
-        await _save_index_to_channel(index)
+        # ذخیره در کانال تلگرام (اختیاری - خطا را لاگ کن اما ادامه بده)
+        try:
+            await _save_index_to_channel(index)
+        except Exception as e:
+            logger.warning(f"خطا در ذخیره در کانال (مهم نیست): {e}")
         
         logger.info(f"📝 {key} -> {message_id}")
 
@@ -231,7 +237,7 @@ async def sync_index_from_channel():
         logger.info(f"🔄 همگام‌سازی شد - {len(index)} آیتم")
         return True
     
-    logger.warning("⚠️ همگام‌سازی ناموفق")
+    logger.warning("⚠️ همگام‌سازی ناموفق - از فایل محلی استفاده می‌شود")
     return False
 
 
