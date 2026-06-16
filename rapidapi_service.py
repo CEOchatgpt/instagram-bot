@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه بدون کش حافظه (فقط کانال تلگرام)
+# rapidapi_service.py - نسخه با قابلیت دانلود فایل
 
 import re
 import aiohttp
@@ -7,6 +7,7 @@ import json
 import logging
 import hashlib
 import time
+from typing import Optional, Dict, List, Any, Tuple
 from config import RAPIDAPI_KEY, RAPIDAPI_HOST
 from channel_cache import (
     get_profile_from_channel, save_profile_to_channel,
@@ -20,6 +21,39 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_DELAY = 1
+
+# هدرهای دانلود برای شبیه‌سازی مرورگر
+DOWNLOAD_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.instagram.com/",
+}
+
+
+async def download_media(url: str, timeout: int = 20) -> Optional[bytes]:
+    """
+    دانلود فایل از URL با هدرهای مناسب و بازگشت بایت‌ها
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=DOWNLOAD_HEADERS, timeout=timeout) as resp:
+                if resp.status == 200:
+                    content_type = resp.headers.get('Content-Type', '')
+                    # اگر محتوا HTML باشد، احتمالاً لینک اشتباه است
+                    if 'text/html' in content_type:
+                        logger.warning(f"URL returned HTML instead of media: {url[:100]}")
+                        return None
+                    return await resp.read()
+                else:
+                    logger.warning(f"Download failed with status {resp.status}: {url[:100]}")
+                    return None
+    except asyncio.TimeoutError:
+        logger.warning(f"Download timeout: {url[:100]}")
+        return None
+    except Exception as e:
+        logger.error(f"Download error: {e} for {url[:100]}")
+        return None
 
 
 def extract_caption_text(caption_field):
@@ -137,10 +171,11 @@ async def get_instagram_profile(username: str, context=None):
         logger.error(f"Error in get_instagram_profile: {e}")
         return None
         
+
 # ========== مدیا (پست، ریلز، استوری، هایلایت) ==========
 
 async def get_instagram_media(post_url: str, context=None) -> dict | None:
-    """دریافت محتوای پست - فقط کانال تلگرام"""
+    """دریافت محتوای پست - با پشتیبانی از دانلود فایل"""
     
     if not post_url or "instagram.com" not in post_url:
         return None
@@ -175,15 +210,15 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
         except Exception as e:
             logger.warning(f"خطا در خواندن مدیا از کانال: {e}")
     
-    # API
-    logger.info(f"🌐 مدیا در کانال نبود - ارسال درخواست به API: {post_url[:50]}...")
-    
     # تشخیص استوری
     story_match = re.search(r'instagram\.com/stories/([^/]+)/?(\d+)?', post_url)
     if story_match:
         result = await get_instagram_story(story_match.group(1), story_match.group(2), context)
         if result and result.get("items"):
+            # ذخیره در کانال (با دانلود فایل)
             if context:
+                # برای ذخیره، باید items را با URL های مستقیم ذخیره کنیم، ولی در اینجا ما فقط URL داریم.
+                # در save_media_to_channel بعداً دانلود انجام می‌شود.
                 await save_media_to_channel(context, cache_key, result, 'story')
         return result
     
@@ -238,6 +273,7 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     result = {"caption": caption, "items": items} if items else None
     
     if result and context:
+        # ذخیره در کانال (با دانلود فایل)
         await save_media_to_channel(context, cache_key, result, content_type)
     
     return result
@@ -246,7 +282,7 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
 # ========== استوری ==========
 
 async def get_instagram_story(username: str, story_id: str = None, context=None):
-    """دریافت استوری کاربر - فقط کانال تلگرام"""
+    """دریافت استوری کاربر - با پشتیبانی از دانلود"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -375,7 +411,7 @@ async def check_and_get_stories(username: str, context=None):
 # ========== ریلز ==========
 
 async def get_user_reels_v2(username: str, context=None):
-    """دریافت ریل‌ها - فقط کانال تلگرام"""
+    """دریافت ریل‌ها - با پشتیبانی از دانلود"""
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -454,7 +490,7 @@ async def get_user_reels_v2(username: str, context=None):
                             
                             items.append(reel_data)
                             
-                            # ذخیره هر ریل به صورت جداگانه در کانال
+                            # ذخیره هر ریل به صورت جداگانه در کانال (با دانلود)
                             if context:
                                 reel_key = f"reel:{username}:{post.get('id', '')}"
                                 reel_result = {"caption": caption_text, "items": [{"type": "video", "url": video_url}]}
