@@ -1,4 +1,4 @@
-# channel_cache.py - نسخه با ذخیره فایل واقعی (دانلود و آپلود)
+# channel_cache.py - نسخه اصلاح‌شده
 
 import logging
 import hashlib
@@ -15,7 +15,7 @@ from config import (
     USER_SETTING_CHANNEL_ID
 )
 from index_manager import save_to_index, get_from_index, generate_storage_key
-from rapidapi_service import download_media
+from downloader import download_media   # <-- از فایل جدید import می‌کنیم
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,6 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
         full_name = profile_data.get('full_name', username)
         message_text = f"👤 {full_name}\n🔖 @{username}"
         
-        # برای پروفایل، عکس را دانلود می‌کنیم و با sendPhoto آپلود می‌کنیم
         if profile_data.get("profile_pic"):
             pic_bytes = await download_media(profile_data["profile_pic"])
             if pic_bytes:
@@ -70,10 +69,8 @@ async def save_profile_to_channel(context: ContextTypes.DEFAULT_TYPE, username: 
                     msg = await context.bot.send_photo(chat_id=channel_id, photo=pic_bytes, caption=message_text, parse_mode='HTML')
                 except Exception as e:
                     logger.error(f"خطا در ارسال عکس پروفایل با bytes: {e}")
-                    # fallback: ارسال به صورت سند
                     msg = await context.bot.send_document(chat_id=channel_id, document=pic_bytes, caption=message_text, parse_mode='HTML')
             else:
-                # اگر دانلود نشد، ارسال بدون عکس
                 msg = await context.bot.send_message(chat_id=channel_id, text=message_text, parse_mode='HTML')
         else:
             msg = await context.bot.send_message(chat_id=channel_id, text=message_text, parse_mode='HTML')
@@ -112,12 +109,10 @@ async def get_profile_from_channel(context: ContextTypes.DEFAULT_TYPE, username:
                 elif line.startswith("🔖"):
                     profile_username = line.replace("🔖", "").strip().lstrip("@")
         
-        # اگر عکس یا فایل دارد، file_id را استخراج می‌کنیم
         profile_pic = None
         if msg.photo:
             profile_pic = msg.photo[-1].file_id
         elif msg.document:
-            # اگر به صورت سند ذخیره شده باشد، می‌توانیم از آن استفاده کنیم
             profile_pic = msg.document.file_id
         
         profile_data = {
@@ -178,7 +173,6 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
 ━━━━━━━━━━━━━━━━
 💾 {time.strftime('%Y/%m/%d %H:%M:%S')}"""
             
-            # دانلود فایل
             file_bytes = await download_media(url)
             if not file_bytes:
                 logger.warning(f"دانلود فایل ناموفق: {url[:100]}")
@@ -186,7 +180,6 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
             
             try:
                 if item["type"] == "video":
-                    # ارسال به صورت ویدئو (با bytes)
                     msg = await context.bot.send_video(
                         chat_id=channel_id,
                         video=file_bytes,
@@ -195,7 +188,6 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
                         supports_streaming=True
                     )
                 else:
-                    # ارسال به صورت عکس (با bytes)
                     msg = await context.bot.send_photo(
                         chat_id=channel_id,
                         photo=file_bytes,
@@ -206,7 +198,6 @@ async def save_media_to_channel(context: ContextTypes.DEFAULT_TYPE, media_key: s
                 await asyncio.sleep(0.3)
             except Exception as e:
                 logger.error(f"خطا در ارسال {item['type']} با bytes: {e}")
-                # تلاش مجدد به صورت سند
                 try:
                     msg = await context.bot.send_document(
                         chat_id=channel_id,
@@ -255,7 +246,6 @@ async def save_reels_list_to_channel(context: ContextTypes.DEFAULT_TYPE, usernam
         
         if msg:
             await save_to_index(storage_key, msg.message_id, "reels_list", {"username": username, "reels_count": len(items)})
-            # هر ریل جداگانه ذخیره می‌شود (توسط save_media_to_channel که در get_user_reels_v2 صدا زده می‌شود)
             return msg.message_id
         return None
     except Exception as e:
@@ -396,7 +386,7 @@ async def get_media_by_key(context: ContextTypes.DEFAULT_TYPE, storage_key: str)
                         caption = line.replace("📝", "").strip()
                         break
             if msg.video:
-                items.append({"type": "video", "url": msg.video.file_id})  # file_id معتبر
+                items.append({"type": "video", "url": msg.video.file_id})
             elif msg.photo:
                 items.append({"type": "photo", "url": msg.photo[-1].file_id})
             elif msg.document:
