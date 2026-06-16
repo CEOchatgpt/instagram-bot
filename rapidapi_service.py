@@ -1,4 +1,4 @@
-# rapidapi_service.py - نسخه با قابلیت دانلود فایل
+# rapidapi_service.py - نسخه اصلاح‌شده
 
 import re
 import aiohttp
@@ -16,44 +16,12 @@ from channel_cache import (
     get_highlights_list_from_channel, save_highlights_list_to_channel
 )
 from extract_instagram_id import extract_instagram_id
+from downloader import download_media   # <-- اضافه شده
 
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_DELAY = 1
-
-# هدرهای دانلود برای شبیه‌سازی مرورگر
-DOWNLOAD_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.instagram.com/",
-}
-
-
-async def download_media(url: str, timeout: int = 20) -> Optional[bytes]:
-    """
-    دانلود فایل از URL با هدرهای مناسب و بازگشت بایت‌ها
-    """
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=DOWNLOAD_HEADERS, timeout=timeout) as resp:
-                if resp.status == 200:
-                    content_type = resp.headers.get('Content-Type', '')
-                    # اگر محتوا HTML باشد، احتمالاً لینک اشتباه است
-                    if 'text/html' in content_type:
-                        logger.warning(f"URL returned HTML instead of media: {url[:100]}")
-                        return None
-                    return await resp.read()
-                else:
-                    logger.warning(f"Download failed with status {resp.status}: {url[:100]}")
-                    return None
-    except asyncio.TimeoutError:
-        logger.warning(f"Download timeout: {url[:100]}")
-        return None
-    except Exception as e:
-        logger.error(f"Download error: {e} for {url[:100]}")
-        return None
 
 
 def extract_caption_text(caption_field):
@@ -215,10 +183,7 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     if story_match:
         result = await get_instagram_story(story_match.group(1), story_match.group(2), context)
         if result and result.get("items"):
-            # ذخیره در کانال (با دانلود فایل)
             if context:
-                # برای ذخیره، باید items را با URL های مستقیم ذخیره کنیم، ولی در اینجا ما فقط URL داریم.
-                # در save_media_to_channel بعداً دانلود انجام می‌شود.
                 await save_media_to_channel(context, cache_key, result, 'story')
         return result
     
@@ -273,7 +238,6 @@ async def get_instagram_media(post_url: str, context=None) -> dict | None:
     result = {"caption": caption, "items": items} if items else None
     
     if result and context:
-        # ذخیره در کانال (با دانلود فایل)
         await save_media_to_channel(context, cache_key, result, content_type)
     
     return result
