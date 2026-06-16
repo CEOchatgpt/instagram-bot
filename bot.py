@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی تمیز و بهینه
+# bot.py - نسخه نهایی کامل با پشتیبانی از دانلود و مدیریت خطا
 
 import asyncio
 import logging
@@ -20,7 +20,8 @@ from telegram.ext import (
 from config import BOT_TOKEN, ADMIN_ID
 from rapidapi_service import (
     get_instagram_media, get_instagram_profile, get_instagram_highlights,
-    get_instagram_highlight_stories, get_user_reels_v2, check_and_get_stories
+    get_instagram_highlight_stories, get_user_reels_v2, check_and_get_stories,
+    download_media
 )
 from database import get_user_mode, set_user_mode, get_user_settings_keyboard, init_db
 from channel_cache import (
@@ -60,8 +61,11 @@ def is_rate_limited(user_id: int) -> tuple[bool, int]:
     return False, 0
 
 
-# ========== ارسال گروهی ==========
+# ========== ارسال گروهی با fallback ==========
 async def send_media_group(chat_id, context, items, caption):
+    """
+    ارسال گروهی با fallback به ارسال تکی در صورت بروز خطا
+    """
     media_group = []
     for i, item in enumerate(items):
         current_caption = caption if i == 0 else None
@@ -72,12 +76,30 @@ async def send_media_group(chat_id, context, items, caption):
                 media_group.append(InputMediaPhoto(media=item["url"], caption=current_caption))
         except:
             continue
-    for i in range(0, len(media_group), 10):
-        try:
+    if not media_group:
+        return
+    
+    # تلاش با گروه
+    try:
+        for i in range(0, len(media_group), 10):
             await context.bot.send_media_group(chat_id=chat_id, media=media_group[i:i+10])
             await asyncio.sleep(1.5)
-        except:
-            await asyncio.sleep(2)
+    except Exception as e:
+        logger.warning(f"ارسال گروه با خطا مواجه شد: {e}. ارسال تکی با دانلود...")
+        # Fallback: ارسال تکی با دانلود
+        for idx, item in enumerate(items):
+            try:
+                file_bytes = await download_media(item["url"])
+                if file_bytes:
+                    if item["type"] == "video":
+                        await context.bot.send_video(chat_id, video=file_bytes, caption=caption if idx == 0 else None, supports_streaming=True)
+                    else:
+                        await context.bot.send_photo(chat_id, photo=file_bytes, caption=caption if idx == 0 else None)
+                else:
+                    # اگر دانلود نشد، سعی کن با sendDocument مستقیم
+                    await context.bot.send_document(chat_id, document=item["url"], caption=caption if idx == 0 else None)
+            except Exception as e2:
+                logger.error(f"خطا در ارسال تکی: {e2}")
 
 
 # ========== منوی اصلی ==========
@@ -112,7 +134,6 @@ async def start(update: Update, context):
     )
 
 
-
 # ========== پروفایل (فقط عکس + اسم + یوزرنیم) ==========
 async def profile_command(update: Update, context, username=None):
     if username is None:
@@ -137,13 +158,35 @@ async def profile_command(update: Update, context, username=None):
         ])
         
         if profile.get("profile_pic"):
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=profile["profile_pic"],
-                caption=caption,
-                parse_mode='HTML',
-                reply_markup=reply_markup
-            )
+            # سعی می‌کنیم با دانلود ارسال کنیم (اگر file_id باشد، مستقیم)
+            try:
+                # اگر file_id است، مستقیماً ارسال می‌شود
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=profile["profile_pic"],
+                    caption=caption,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            except:
+                # اگر file_id نیست، شاید URL باشد، دانلود می‌کنیم
+                pic_bytes = await download_media(profile["profile_pic"])
+                if pic_bytes:
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=pic_bytes,
+                        caption=caption,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup
+                    )
+                else:
+                    # در نهایت بدون عکس
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=caption,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup
+                    )
             await processing.delete()
         else:
             await processing.edit_text(caption, parse_mode='HTML', reply_markup=reply_markup)
@@ -212,17 +255,29 @@ async def show_reel_item(update: Update, context, username: str, index: int):
     markup = InlineKeyboardMarkup(keyboard)
     video_url = item["url"]
     
+    # اگر لینک مستقیم نبود، از API دریافت کن
     if "instagram.com/channel/" in video_url:
         media_result = await get_instagram_media(video_url, context)
         if media_result and media_result.get("items"):
             video_url = media_result["items"][0]["url"]
     
+    # تلاش برای ارسال با دانلود
     try:
-        await context.bot.send_video(chat_id=update.effective_chat.id, video=video_url, caption=caption, supports_streaming=True, parse_mode='HTML', reply_markup=markup)
-    except:
+        file_bytes = await download_media(video_url)
+        if file_bytes:
+            await context.bot.send_video(chat_id=update.effective_chat.id, video=file_bytes, caption=caption, supports_streaming=True, parse_mode='HTML', reply_markup=markup)
+        else:
+            # fallback: ارسال مستقیم URL
+            await context.bot.send_video(chat_id=update.effective_chat.id, video=video_url, caption=caption, supports_streaming=True, parse_mode='HTML', reply_markup=markup)
+    except Exception as e:
+        logger.error(f"ارسال ریل با خطا: {e}")
         try:
-            await context.bot.send_document(chat_id=update.effective_chat.id, document=video_url, caption=caption, parse_mode='HTML', reply_markup=markup)
-        except:
+            # سعی کن به صورت داکیومنت با دانلود
+            if file_bytes:
+                await context.bot.send_document(chat_id=update.effective_chat.id, document=file_bytes, caption=caption, parse_mode='HTML', reply_markup=markup)
+            else:
+                await context.bot.send_document(chat_id=update.effective_chat.id, document=video_url, caption=caption, parse_mode='HTML', reply_markup=markup)
+        except Exception as e2:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"🎬 <b>ریل از @{username}</b>\n\n{caption}\n\n🔗 لینک مستقیم:\n{video_url}", parse_mode='HTML', reply_markup=markup, disable_web_page_preview=True)
 
 
@@ -287,12 +342,28 @@ async def handle_highlight_callback(update: Update, context):
         if len(items) == 1:
             item = items[0]
             try:
-                if item["type"] == "video":
-                    await context.bot.send_video(query.message.chat_id, item["url"], caption=caption, supports_streaming=True, reply_markup=reply_markup)
+                file_bytes = await download_media(item["url"])
+                if file_bytes:
+                    if item["type"] == "video":
+                        await context.bot.send_video(query.message.chat_id, video=file_bytes, caption=caption, supports_streaming=True, reply_markup=reply_markup)
+                    else:
+                        await context.bot.send_photo(query.message.chat_id, photo=file_bytes, caption=caption, reply_markup=reply_markup)
                 else:
-                    await context.bot.send_photo(query.message.chat_id, item["url"], caption=caption, reply_markup=reply_markup)
-            except:
-                await context.bot.send_document(query.message.chat_id, item["url"], caption=caption, reply_markup=reply_markup)
+                    # fallback به URL
+                    if item["type"] == "video":
+                        await context.bot.send_video(query.message.chat_id, video=item["url"], caption=caption, supports_streaming=True, reply_markup=reply_markup)
+                    else:
+                        await context.bot.send_photo(query.message.chat_id, photo=item["url"], caption=caption, reply_markup=reply_markup)
+            except Exception as e:
+                logger.error(f"Error sending highlight single: {e}")
+                # تلاش با سند
+                try:
+                    if file_bytes:
+                        await context.bot.send_document(query.message.chat_id, document=file_bytes, caption=caption, reply_markup=reply_markup)
+                    else:
+                        await context.bot.send_document(query.message.chat_id, document=item["url"], caption=caption, reply_markup=reply_markup)
+                except Exception as e2:
+                    await processing.edit_text(f"❌ خطا: {str(e2)[:100]}")
         else:
             await send_media_group(query.message.chat_id, context, items, caption)
             await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ هایلایت «{highlight_info.get('title')}» ارسال شد.\n\n🔙 برای بازگشت به لیست هایلایت‌ها روی دکمه زیر کلیک کن:", reply_markup=reply_markup)
@@ -324,12 +395,26 @@ async def stories_command(update: Update, context, username=None):
         if len(items) == 1:
             item = items[0]
             try:
-                if item["type"] == "video":
-                    await context.bot.send_video(chat_id=update.effective_chat.id, video=item["url"], caption=caption, supports_streaming=True, reply_markup=reply_markup)
+                file_bytes = await download_media(item["url"])
+                if file_bytes:
+                    if item["type"] == "video":
+                        await context.bot.send_video(chat_id=update.effective_chat.id, video=file_bytes, caption=caption, supports_streaming=True, reply_markup=reply_markup)
+                    else:
+                        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=file_bytes, caption=caption, reply_markup=reply_markup)
                 else:
-                    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=item["url"], caption=caption, reply_markup=reply_markup)
-            except:
-                await context.bot.send_document(chat_id=update.effective_chat.id, document=item["url"], caption=caption, reply_markup=reply_markup)
+                    if item["type"] == "video":
+                        await context.bot.send_video(chat_id=update.effective_chat.id, video=item["url"], caption=caption, supports_streaming=True, reply_markup=reply_markup)
+                    else:
+                        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=item["url"], caption=caption, reply_markup=reply_markup)
+            except Exception as e:
+                logger.error(f"Error sending story single: {e}")
+                try:
+                    if file_bytes:
+                        await context.bot.send_document(chat_id=update.effective_chat.id, document=file_bytes, caption=caption, reply_markup=reply_markup)
+                    else:
+                        await context.bot.send_document(chat_id=update.effective_chat.id, document=item["url"], caption=caption, reply_markup=reply_markup)
+                except Exception as e2:
+                    await processing.edit_text(f"❌ خطا: {str(e2)[:100]}")
         else:
             await send_media_group(update.effective_chat.id, context, items, caption)
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ {len(items)} استوری از @{username} ارسال شد.\n\n🔙 برای بازگشت به منوی انتخاب کلیک کن:", reply_markup=reply_markup)
@@ -347,7 +432,6 @@ async def show_settings_menu(update: Update, context, query=None):
     
     text = f"⚙️ <b>تنظیمات ارسال</b>\n\nحالت فعلی: {mode_text}\n\n📌 <b>توضیحات:</b>\n• آلبوم ترکیبی: چند رسانه در یک پیام\n• فایل جداگانه: هر رسانه به صورت جداگانه\n\n<i>🕐 آخرین بروزرسانی: {time.strftime('%H:%M:%S')}</i>"
     
-    # استفاده از کیبورد با نمایش حالت فعال
     from database import get_user_settings_keyboard_with_mode
     keyboard = get_user_settings_keyboard_with_mode(current_mode)
     
@@ -384,6 +468,7 @@ async def handle_link(update: Update, context):
         await update.message.reply_text("❌ فقط لینک اینستاگرام قبول میکنم!")
         return
     
+    # تشخیص پروفایل
     profile_pattern = r'(?:https?://)?(?:www\.)?instagram\.com/([a-zA-Z0-9_.]+)/?$'
     match = re.search(profile_pattern, url)
     if match and not re.search(r'/(p|reel|stories|tv|highlights)/', url):
@@ -416,19 +501,20 @@ async def handle_link(update: Update, context):
                 try:
                     if len(items) == 1:
                         item = items[0]
+                        # استفاده از file_id (که معتبر است)
                         if default_mode == "file":
-                            await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption)
+                            await context.bot.send_document(update.effective_chat.id, document=item["url"], caption=caption)
                         else:
                             if item["type"] == "video":
-                                await context.bot.send_video(update.effective_chat.id, item["url"], supports_streaming=True, caption=caption)
+                                await context.bot.send_video(update.effective_chat.id, video=item["url"], supports_streaming=True, caption=caption)
                             else:
-                                await context.bot.send_photo(update.effective_chat.id, item["url"], caption=caption)
+                                await context.bot.send_photo(update.effective_chat.id, photo=item["url"], caption=caption)
                     else:
                         if default_mode == "album":
                             await send_media_group(update.effective_chat.id, context, items, caption)
                         else:
                             for i, item in enumerate(items):
-                                await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption if i == 0 else None)
+                                await context.bot.send_document(update.effective_chat.id, document=item["url"], caption=caption if i == 0 else None)
                                 await asyncio.sleep(0.5)
                     await status_msg.delete()
                     return
@@ -445,21 +531,53 @@ async def handle_link(update: Update, context):
         
         items, caption, default_mode = result.get("items", []), result.get("caption", "دانلود از اینستاگرام"), await get_user_mode(user_id, context)
         
+        # ارسال با دانلود
         if len(items) == 1:
             item = items[0]
-            if default_mode == "file":
-                await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption)
-            else:
-                if item["type"] == "video":
-                    await context.bot.send_video(update.effective_chat.id, item["url"], supports_streaming=True, caption=caption)
+            try:
+                file_bytes = await download_media(item["url"])
+                if file_bytes:
+                    if default_mode == "file":
+                        await context.bot.send_document(update.effective_chat.id, document=file_bytes, caption=caption)
+                    else:
+                        if item["type"] == "video":
+                            await context.bot.send_video(update.effective_chat.id, video=file_bytes, supports_streaming=True, caption=caption)
+                        else:
+                            await context.bot.send_photo(update.effective_chat.id, photo=file_bytes, caption=caption)
                 else:
-                    await context.bot.send_photo(update.effective_chat.id, item["url"], caption=caption)
+                    # fallback به URL
+                    if default_mode == "file":
+                        await context.bot.send_document(update.effective_chat.id, document=item["url"], caption=caption)
+                    else:
+                        if item["type"] == "video":
+                            await context.bot.send_video(update.effective_chat.id, video=item["url"], supports_streaming=True, caption=caption)
+                        else:
+                            await context.bot.send_photo(update.effective_chat.id, photo=item["url"], caption=caption)
+            except Exception as e:
+                logger.error(f"ارسال تکی با خطا: {e}")
+                # آخرین تلاش: sendDocument با دانلود
+                try:
+                    file_bytes = await download_media(item["url"])
+                    if file_bytes:
+                        await context.bot.send_document(update.effective_chat.id, document=file_bytes, caption=caption)
+                    else:
+                        await context.bot.send_document(update.effective_chat.id, document=item["url"], caption=caption)
+                except Exception as e2:
+                    await processing_msg.edit_text(f"❌ خطا در ارسال: {str(e2)[:100]}")
         else:
+            # چندین آیتم
             if default_mode == "album":
                 await send_media_group(update.effective_chat.id, context, items, caption)
             else:
                 for i, item in enumerate(items):
-                    await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption if i == 0 else None)
+                    try:
+                        file_bytes = await download_media(item["url"])
+                        if file_bytes:
+                            await context.bot.send_document(update.effective_chat.id, document=file_bytes, caption=caption if i == 0 else None)
+                        else:
+                            await context.bot.send_document(update.effective_chat.id, document=item["url"], caption=caption if i == 0 else None)
+                    except Exception as e:
+                        logger.error(f"خطا در ارسال آیتم {i}: {e}")
                     await asyncio.sleep(0.5)
         await processing_msg.delete()
     except Exception as e:
@@ -487,22 +605,26 @@ async def handle_direct_input(update: Update, context):
                 if cached_result and cached_result.get("items"):
                     await processing.delete()
                     items, caption, default_mode = cached_result["items"], cached_result.get("caption", "دانلود از اینستاگرام"), await get_user_mode(update.effective_user.id, context)
-                    if len(items) == 1:
-                        item = items[0]
-                        if default_mode == "file":
-                            await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption)
-                        else:
-                            if item["type"] == "video":
-                                await context.bot.send_video(update.effective_chat.id, item["url"], supports_streaming=True, caption=caption)
+                    # ارسال مشابه handle_link
+                    try:
+                        if len(items) == 1:
+                            item = items[0]
+                            if default_mode == "file":
+                                await context.bot.send_document(update.effective_chat.id, document=item["url"], caption=caption)
                             else:
-                                await context.bot.send_photo(update.effective_chat.id, item["url"], caption=caption)
-                    else:
-                        if default_mode == "album":
-                            await send_media_group(update.effective_chat.id, context, items, caption)
+                                if item["type"] == "video":
+                                    await context.bot.send_video(update.effective_chat.id, video=item["url"], supports_streaming=True, caption=caption)
+                                else:
+                                    await context.bot.send_photo(update.effective_chat.id, photo=item["url"], caption=caption)
                         else:
-                            for i, item in enumerate(items):
-                                await context.bot.send_document(update.effective_chat.id, item["url"], caption=caption if i == 0 else None)
-                                await asyncio.sleep(0.5)
+                            if default_mode == "album":
+                                await send_media_group(update.effective_chat.id, context, items, caption)
+                            else:
+                                for i, item in enumerate(items):
+                                    await context.bot.send_document(update.effective_chat.id, document=item["url"], caption=caption if i == 0 else None)
+                                    await asyncio.sleep(0.5)
+                    except Exception as e:
+                        await processing.edit_text(f"❌ خطا: {str(e)[:100]}")
                     return
         else:
             await processing.edit_text(f"📥 شناسه {text} در دیتابیس نیست. در حال دریافت از اینستاگرام...")
@@ -565,7 +687,11 @@ async def handle_reel_callbacks(update: Update, context):
             item = reels_data["items"][index]
             msg = await query.message.reply_text("📥 در حال ارسال فایل...")
             try:
-                await context.bot.send_document(chat_id=update.effective_chat.id, document=item["url"], filename=f"reel_{reels_data['username']}_{index+1}.mp4", caption=f"🎬 ریل از @{reels_data['username']}\n{item['caption'][:100]}")
+                file_bytes = await download_media(item["url"])
+                if file_bytes:
+                    await context.bot.send_document(chat_id=update.effective_chat.id, document=file_bytes, filename=f"reel_{reels_data['username']}_{index+1}.mp4", caption=f"🎬 ریل از @{reels_data['username']}\n{item['caption'][:100]}")
+                else:
+                    await context.bot.send_document(chat_id=update.effective_chat.id, document=item["url"], filename=f"reel_{reels_data['username']}_{index+1}.mp4", caption=f"🎬 ریل از @{reels_data['username']}\n{item['caption'][:100]}")
                 await msg.delete()
             except Exception as e:
                 await msg.edit_text(f"❌ خطا در دانلود: {str(e)[:100]}")
@@ -657,6 +783,7 @@ async def clear_cache_command(update: Update, context):
         await update.message.reply_text("❌ شما دسترسی به این دستور ندارید.")
         return
     
+    clear_memory_cache()
     await update.message.reply_text("✅ تمام کش‌های حافظه پاک شد.")
 
 
