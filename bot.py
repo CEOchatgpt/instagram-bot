@@ -1,4 +1,4 @@
-# bot.py - نسخه نهایی کامل با پشتیبانی از دانلود و مدیریت خطا
+# bot.py - نسخه نهایی با اصلاح import
 
 import asyncio
 import logging
@@ -21,8 +21,9 @@ from config import BOT_TOKEN, ADMIN_ID
 from rapidapi_service import (
     get_instagram_media, get_instagram_profile, get_instagram_highlights,
     get_instagram_highlight_stories, get_user_reels_v2, check_and_get_stories,
-    download_media
+    # download_media را از اینجا حذف می‌کنیم
 )
+from downloader import download_media   # <-- اضافه شده
 from database import get_user_mode, set_user_mode, get_user_settings_keyboard, init_db
 from channel_cache import (
     save_profile_to_channel, get_profile_from_channel, save_media_to_channel,
@@ -36,6 +37,7 @@ from index_manager import (
     get_from_index, set_context, set_index_channel, sync_index_from_channel,
     search_by_media_id, search_by_keyword, search_by_username
 )
+
 
 # تنظیمات لاگ
 logging.basicConfig(
